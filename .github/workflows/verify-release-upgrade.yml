@@ -1,0 +1,54 @@
+name: Verify published desktop upgrade
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Install v0.1.0 and verify update to v0.1.1
+        shell: pwsh
+        env:
+          WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: --remote-debugging-port=9222
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP 'stock-fund-0.1.0.exe'
+          $installDir = Join-Path $env:RUNNER_TEMP 'stock-fund-update-test'
+          $url = 'https://github.com/xstrade/stock-fund-tauri/releases/download/v0.1.0/_0.1.0_x64-setup.exe'
+          curl.exe --fail --location --retry 3 "$url" --output "$installer"
+          if ($LASTEXITCODE -ne 0) { throw 'Download of v0.1.0 failed' }
+          $installation = Start-Process -FilePath $installer -ArgumentList "/S /D=$installDir" -Wait -PassThru
+          if ($installation.ExitCode -ne 0) { throw "Installation failed: $($installation.ExitCode)" }
+          Start-Process -FilePath (Join-Path $installDir 'stock-fund-tauri.exe')
+          node tests/release/windows-update.mjs
+          exit $LASTEXITCODE
+
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install v0.1.0 and verify update to v0.1.1
+        run: |
+          test_dir="$(mktemp -d)"
+          mount_dir="$test_dir/mounted"
+          mkdir "$mount_dir"
+          curl --fail --location --retry 3 \
+            'https://github.com/xstrade/stock-fund-tauri/releases/download/v0.1.0/_0.1.0_aarch64.dmg' \
+            --output "$test_dir/stock-fund.dmg"
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount_dir" "$test_dir/stock-fund.dmg"
+          app="$test_dir/盯盘管家.app"
+          ditto "$mount_dir/盯盘管家.app" "$app"
+          hdiutil detach "$mount_dir"
+          swiftc tests/release/macos-update.swift -o "$test_dir/verify-update"
+          open "$app"
+          "$test_dir/verify-update" "$app"
