@@ -30,21 +30,28 @@ function Get-AppWindow {
     }
 }
 
-function Find-Control([string]$Name) {
+function Find-Control([string]$Name, [System.Windows.Automation.ControlType]$ControlType) {
     $window = Get-AppWindow
     if (!$window) { return }
-    $condition = [System.Windows.Automation.PropertyCondition]::new(
+    [System.Windows.Automation.Condition]$condition = [System.Windows.Automation.PropertyCondition]::new(
         [System.Windows.Automation.AutomationElement]::NameProperty, $Name)
+    if ($ControlType) {
+        $typeCondition = [System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty, $ControlType)
+        $condition = [System.Windows.Automation.AndCondition]::new($condition, $typeCondition)
+    }
     return $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
 }
 
 function Press([string]$Name) {
-    $control = Wait-For $Name { Find-Control $Name }
+    $control = Wait-For $Name { Find-Control $Name ([System.Windows.Automation.ControlType]::Button) }
+    Write-Host "Clicking $Name"
     $control.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
 }
 
 function Check-Setting([string]$Name, [bool]$Set) {
-    $control = Wait-For $Name { Find-Control $Name }
+    $control = Wait-For $Name { Find-Control $Name ([System.Windows.Automation.ControlType]::CheckBox) }
+    Write-Host "Checking $Name"
     $toggle = $control.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
     if ($Set -and $toggle.Current.ToggleState -ne 'On') { $toggle.Toggle() }
     if ($toggle.Current.ToggleState -ne 'On') { throw "Setting is off: $Name" }
