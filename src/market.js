@@ -2,7 +2,8 @@ import { loadProviderHistory, withDeadline } from './chartSources.js'
 import { isTauri } from '@tauri-apps/api/core'
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 
-export const demo = import.meta.env.VITE_DEMO_MODE !== 'false'
+const demoMode = import.meta.env.VITE_DEMO_MODE
+export const demo = demoMode === 'true' || (import.meta.env.DEV && demoMode !== 'false')
 const apiBase = import.meta.env.VITE_API_BASE || 'https://api.hqzs.top/apis/'
 export const sessionScope = new URL(apiBase.endsWith('/') ? apiBase : apiBase + '/').href
 
