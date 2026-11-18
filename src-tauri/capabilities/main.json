@@ -1,0 +1,30 @@
+{
+  "identifier": "main",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-always-on-top",
+    "core:window:allow-set-size",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://api.hqzs.top/apis/account/login" },
+        { "url": "https://api.hqzs.top/apis/position/**" },
+        { "url": "https://searchapi.eastmoney.com/api/Info/Search" },
+        { "url": "https://push2his.eastmoney.com/api/qt/stock/trends2/get" },
+        { "url": "https://push2his.eastmoney.com/api/qt/stock/kline/get" },
+        { "url": "https://push2.eastmoney.com/api/qt/stock/trends2/get" },
+        { "url": "https://push2.eastmoney.com/api/qt/stock/kline/get" },
+        { "url": "https://push2delay.eastmoney.com/api/qt/stock/trends2/get" },
+        { "url": "https://push2delay.eastmoney.com/api/qt/stock/kline/get" },
+        { "url": "https://web.ifzq.gtimg.cn/appstock/app/minute/query" },
+        { "url": "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get" },
+        { "url": "https://push2.eastmoney.com/api/qt/ulist.np/get" },
+        { "url": "https://82.push2.eastmoney.com/api/qt/ulist.np/get" },
+        { "url": "https://80.push2.eastmoney.com/api/qt/ulist.np/get" },
+        { "url": "https://push2delay.eastmoney.com/api/qt/ulist.np/get" },
+        { "url": "https://qt.gtimg.cn/q=*" }
+      ]
+    }
+  ]
+}

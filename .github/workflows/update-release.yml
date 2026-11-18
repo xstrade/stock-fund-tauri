@@ -1,0 +1,92 @@
+name: Build signed updates
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-update-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundle: nsis
+            apple_signing_identity: ""
+          - os: macos-15
+            target: aarch64-apple-darwin
+            bundle: app,dmg
+            apple_signing_identity: "-"
+    runs-on: ${{ matrix.os }}
+    outputs:
+      release_id: ${{ steps.tauri.outputs.releaseId }}
+      app_version: ${{ steps.tauri.outputs.appVersion }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
+      - run: npm ci
+      - name: Configure the GitHub Releases update feed
+        shell: bash
+        env:
+          UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+        run: |
+          node --input-type=module <<'JS'
+          import { writeFileSync } from 'node:fs'
+
+          const pubkey = process.env.UPDATER_PUBLIC_KEY?.trim()
+          if (!pubkey) throw new Error('Set the TAURI_UPDATER_PUBLIC_KEY repository variable')
+
+          const endpoint = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/releases/latest/download/latest.json`
+          writeFileSync('src-tauri/tauri.release.json', JSON.stringify({
+            bundle: { createUpdaterArtifacts: true },
+            plugins: { updater: { endpoints: [endpoint], pubkey, requireSignedVersion: true } },
+          }))
+          JS
+      - name: Build and upload to a draft release
+        id: tauri
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: ${{ matrix.apple_signing_identity }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: v__VERSION__
+          releaseName: 盯盘管家 v__VERSION__
+          releaseDraft: true
+          generateReleaseNotes: true
+          uploadUpdaterJson: true
+          updaterJsonPreferNsis: true
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundle }} --config src-tauri/tauri.release.json
+
+  verify-update-feed:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_ID: ${{ needs.release.outputs.release_id }}
+      APP_VERSION: ${{ needs.release.outputs.app_version }}
+    steps:
+      - name: Check the draft update manifest
+        run: |
+          asset_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --paginate --jq '.[] | select(.name == "latest.json") | .id')
+          test -n "$asset_id"
+          gh api "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" -H 'Accept: application/octet-stream' > latest.json
+          jq -e --arg version "$APP_VERSION" '
+            .version == $version and
+            ([.platforms["windows-x86_64"], .platforms["darwin-aarch64"]]
+              | all((.signature | type == "string" and length > 0) and
+                    (.url | type == "string" and startswith("https://"))))
+          ' latest.json > /dev/null

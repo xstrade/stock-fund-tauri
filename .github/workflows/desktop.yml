@@ -1,0 +1,71 @@
+name: Desktop build
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            bundle: nsis
+            target: x86_64-pc-windows-msvc
+            path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+          - os: macos-15
+            bundle: dmg
+            target: aarch64-apple-darwin
+            path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
+      - run: npm ci
+      - run: npm run tauri -- build --bundles ${{ matrix.bundle }} --ci --no-sign --target ${{ matrix.target }}
+      - name: Smoke test Windows installation
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem "src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe" | Select-Object -First 1
+          if (!$installer) { throw 'NSIS installer missing' }
+          $installDir = Join-Path $env:RUNNER_TEMP 'stock-fund-tauri-install'
+          $installation = Start-Process -FilePath $installer.FullName -ArgumentList "/S /D=$installDir" -Wait -PassThru
+          if ($installation.ExitCode -ne 0) { throw "Install exited with $($installation.ExitCode)" }
+
+          $app = Join-Path $installDir 'stock-fund-tauri.exe'
+          $reader = [System.IO.BinaryReader]::new([System.IO.File]::OpenRead($app))
+          try {
+            $reader.BaseStream.Position = 0x3c
+            $reader.BaseStream.Position = $reader.ReadUInt32()
+            if ($reader.ReadUInt32() -ne 0x4550 -or $reader.ReadUInt16() -ne 0x8664) {
+              throw 'Installed executable is not an x64 PE'
+            }
+          } finally {
+            $reader.Dispose()
+          }
+
+          $process = Start-Process -FilePath $app -PassThru
+          try {
+            Start-Sleep -Seconds 5
+            if ($process.HasExited) { throw "Desktop app exited with $($process.ExitCode)" }
+          } finally {
+            if (!$process.HasExited) { Stop-Process -Id $process.Id -Force }
+          }
+
+          $uninstall = Join-Path $installDir 'uninstall.exe'
+          $removal = Start-Process -FilePath $uninstall -ArgumentList '/S' -Wait -PassThru
+          if ($removal.ExitCode -ne 0 -or (Test-Path $app)) { throw 'Uninstall did not remove the executable' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.bundle }}
+          path: ${{ matrix.path }}
+          if-no-files-found: error

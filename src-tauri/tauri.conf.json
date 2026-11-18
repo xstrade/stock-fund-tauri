@@ -1,0 +1,49 @@
+{
+  "productName": "盯盘管家",
+  "version": "0.1.0",
+  "identifier": "org.stockfund.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "盯盘管家",
+        "width": 390,
+        "height": 510,
+        "minWidth": 290,
+        "minHeight": 260,
+        "decorations": true,
+        "transparent": true,
+        "backgroundThrottling": "disabled"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "dmg",
+      "nsis"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../LICENSE": "licenses/stock-fund-tauri.txt",
+      "../THIRD_PARTY_NOTICES.md": "licenses/THIRD_PARTY_NOTICES.md",
+      "../licenses/lightweight-charts.txt": "licenses/lightweight-charts.txt",
+      "../licenses/lucide.txt": "licenses/lucide.txt"
+    }
+  }
+}
