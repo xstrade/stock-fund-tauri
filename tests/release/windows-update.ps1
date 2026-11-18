@@ -54,7 +54,7 @@ function Check-Setting([string]$Name, [bool]$Set) {
     Write-Host "Checking $Name"
     $toggle = $control.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
     if ($Set -and $toggle.Current.ToggleState -ne 'On') { $toggle.Toggle() }
-    if ($toggle.Current.ToggleState -ne 'On') { throw "Setting is off: $Name" }
+    $null = Wait-For "setting on: $Name" { $toggle.Current.ToggleState -eq 'On' } 10
 }
 
 if ((Get-Version) -ne '0.1.0') { throw 'Expected v0.1.0 installed from the public installer' }
