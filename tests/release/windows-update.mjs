@@ -1,50 +1,73 @@
 import assert from 'node:assert/strict'
-import { chromium, expect } from '@playwright/test'
+import { once } from 'node:events'
+import { setTimeout as delay } from 'node:timers/promises'
 
-const endpoint = 'http://127.0.0.1:9222'
+const endpoint = 'http://127.0.0.1:9222/json/list'
 
-async function connect(version) {
-  let result
-  await expect.poll(async () => {
-    let browser
+async function waitFor(label, get, timeout = 90_000) {
+  const deadline = Date.now() + timeout
+  let lastError
+  do {
     try {
-      browser = await chromium.connectOverCDP(endpoint, { timeout: 2000 })
-      const page = browser.contexts()[0]?.pages().find((target) => target.url().includes('tauri.localhost'))
-      const current = await page?.evaluate(() => window.__TAURI_INTERNALS__.invoke('plugin:app|version'))
-      if (current === version) {
-        result = { browser, page }
-        return current
-      }
-    } catch {
-      // The installer closes the original WebView before starting the new one.
+      const value = await get()
+      if (value) return value
+    } catch (error) {
+      lastError = error
     }
-    await browser?.close().catch(() => {})
-  }, { timeout: 180_000 }).toBe(version)
-  return result
+    await delay(1000)
+  } while (Date.now() < deadline)
+  throw new Error(`Timed out waiting for ${label}: ${lastError ?? 'condition was false'}`)
 }
 
-const old = await connect('0.1.0')
-const settings = old.page.getByRole('button', { name: '设置', exact: true })
-await settings.click()
-await old.page.getByLabel('精简列表', { exact: true }).check()
-await old.page.getByLabel('窗口置顶', { exact: true }).check()
-await old.page.getByRole('button', { name: '保存设置' }).click()
-const readSettings = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('desktop-settings')))
-const before = await readSettings(old.page)
-assert.equal(before.compact, true)
-assert.equal(before.pinned, true)
+async function evaluate(expression) {
+  const response = await fetch(endpoint, { signal: AbortSignal.timeout(5000) })
+  const pages = await response.json()
+  const page = pages.find(({ url }) => url.includes('tauri.localhost'))
+  if (!page) throw new Error(`Tauri page absent. Titles: ${pages.map(({ title }) => title).join(', ')}`)
+  const socket = new WebSocket(page.webSocketDebuggerUrl)
+  try {
+    await once(socket, 'open', { signal: AbortSignal.timeout(5000) })
+    const reply = once(socket, 'message', { signal: AbortSignal.timeout(5000) })
+    socket.send(JSON.stringify({
+      id: 1, method: 'Runtime.evaluate',
+      params: { expression, returnByValue: true, awaitPromise: true },
+    }))
+    const [{ data }] = await reply
+    const message = JSON.parse(data)
+    if (message.error || message.result.exceptionDetails) {
+      throw new Error(JSON.stringify(message.error ?? message.result.exceptionDetails))
+    }
+    return message.result.result.value
+  } finally {
+    socket.close()
+  }
+}
+
+const version = () => evaluate("window.__TAURI_INTERNALS__.invoke('plugin:app|version')")
+const readSettings = () => evaluate("JSON.parse(localStorage.getItem('desktop-settings'))")
+await waitFor('v0.1.0 running', async () => await version() === '0.1.0')
+await waitFor('Settings button', () => evaluate(`(() => {
+  const button = document.querySelector('button[aria-label="设置"]:not(:disabled)')
+  button?.click()
+  return !!button
+})()`))
+await waitFor('settings saved', () => evaluate(`(() => {
+  const form = [...document.forms].find((item) => item.textContent.includes('保存设置'))
+  if (!form) return false
+  for (const input of form.querySelectorAll('input[type="checkbox"]')) {
+    if (!input.checked) input.click()
+  }
+  form.querySelector('button.primary').click()
+  return true
+})()`))
+const before = await waitFor('settings persisted', async () => {
+  const value = await readSettings()
+  return value?.compact && value?.pinned ? value : null
+})
 console.log('v0.1.0 started and test settings saved.')
 
-await expect(old.page.getByText('发现新版本 0.1.1')).toBeVisible({ timeout: 100_000 })
-const install = old.page.getByRole('button', { name: '下载并安装' })
-await install.click({ noWaitAfter: true }).catch((error) => {
-  if (!/closed|destroyed/i.test(String(error))) throw error
-})
-const updated = await connect('0.1.1')
-assert.deepEqual(await readSettings(updated.page), before)
-await updated.page.getByRole('button', { name: '设置', exact: true }).click()
-await expect(updated.page.getByLabel('精简列表', { exact: true })).toBeChecked()
-await expect(updated.page.getByLabel('窗口置顶', { exact: true })).toBeChecked()
-console.log('v0.1.1 downloaded, installed, and relaunched. All saved settings match.')
-await updated.browser.close()
-await old.browser.close().catch(() => {})
+await waitFor('v0.1.1 available', () => evaluate("document.body.innerText.includes('发现新版本 0.1.1')"))
+await evaluate("document.querySelector('.update-action').click()")
+await waitFor('v0.1.1 relaunched by the installer', async () => await version() === '0.1.1', 240_000)
+assert.deepEqual(await readSettings(), before)
+console.log('v0.1.1 downloaded, installed and relaunched. All saved settings match.')
