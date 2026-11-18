@@ -73,7 +73,8 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # GitHub only exposes draft releases to callers with write access.
+      contents: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       RELEASE_ID: ${{ needs.release.outputs.release_id }}
