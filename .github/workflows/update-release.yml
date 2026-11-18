@@ -18,10 +18,12 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             bundle: nsis
+            release_asset_name: stock-fund-windows-x64[ext]
             apple_signing_identity: ""
           - os: macos-15
             target: aarch64-apple-darwin
             bundle: app,dmg
+            release_asset_name: stock-fund-macos-arm64[ext]
             apple_signing_identity: "-"
     runs-on: ${{ matrix.os }}
     outputs:
@@ -66,6 +68,7 @@ jobs:
           releaseDraft: true
           generateReleaseNotes: true
           uploadUpdaterJson: true
+          releaseAssetNamePattern: ${{ matrix.release_asset_name }}
           updaterJsonPreferNsis: true
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundle }} --config src-tauri/tauri.release.json
 
@@ -82,7 +85,12 @@ jobs:
     steps:
       - name: Check the draft update manifest
         run: |
-          asset_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --paginate --jq '.[] | select(.name == "latest.json") | .id')
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --paginate --slurp > assets.json
+          jq -e '
+            (flatten | map(select(.state == "uploaded" and .size > 0) | .name)) as $names
+            | ["stock-fund-windows-x64.exe", "stock-fund-macos-arm64.dmg"] - $names == []
+          ' assets.json > /dev/null
+          asset_id=$(jq -r 'flatten[] | select(.name == "latest.json") | .id' assets.json)
           test -n "$asset_id"
           gh api "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" -H 'Accept: application/octet-stream' > latest.json
           jq -e --arg version "$APP_VERSION" '
