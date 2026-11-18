@@ -1,6 +1,6 @@
 {
   "productName": "盯盘管家",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "identifier": "org.stockfund.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
