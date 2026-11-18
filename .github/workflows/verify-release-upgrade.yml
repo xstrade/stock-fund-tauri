@@ -1,6 +1,10 @@
 name: Verify published desktop upgrade
 on:
   workflow_dispatch:
+    inputs:
+      windows_only:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -11,15 +15,8 @@ jobs:
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: npm
-      - run: npm ci
       - name: Install v0.1.0 and verify update to v0.1.1
         shell: pwsh
-        env:
-          WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: --remote-debugging-port=9222
         run: |
           $installer = Join-Path $env:RUNNER_TEMP 'stock-fund-0.1.0.exe'
           $installDir = Join-Path $env:RUNNER_TEMP 'stock-fund-update-test'
@@ -28,11 +25,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Download of v0.1.0 failed' }
           $installation = Start-Process -FilePath $installer -ArgumentList "/S /D=$installDir" -Wait -PassThru
           if ($installation.ExitCode -ne 0) { throw "Installation failed: $($installation.ExitCode)" }
-          Start-Process -FilePath (Join-Path $installDir 'stock-fund-tauri.exe')
-          node tests/release/windows-update.mjs
-          exit $LASTEXITCODE
+          ./tests/release/windows-update.ps1 -AppPath (Join-Path $installDir 'stock-fund-tauri.exe')
 
   macos:
+    if: ${{ !inputs.windows_only }}
     runs-on: macos-15
     timeout-minutes: 12
     steps:
