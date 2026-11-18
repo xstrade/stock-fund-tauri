@@ -332,10 +332,12 @@ const StockChart = defineAsyncComponent(() => import('./StockChart.vue'))
 
 <template>
   <div class="shell" :class="{ compact: settings.compact }" :style="{ '--opacity': settings.opacity / 100 }">
+    <div class="shell-glow" aria-hidden="true"></div>
     <header class="toolbar" aria-label="应用工具栏">
       <select v-if="listVisible" v-model="groupId" class="group-select" aria-label="分组" :disabled="busy || !groups.length">
         <option v-for="item in groups" :key="item.group_id" :value="item.group_id">{{ item.group_name }}</option>
       </select>
+      <p v-else class="brand">盯盘管家</p>
       <div class="toolbar-actions">
         <button v-if="listVisible" type="button" class="layout-button" aria-label="精简模式" :aria-pressed="compactList" @click="toggleCompact">{{ compactList ? '展开' : '精简' }}</button>
         <span v-if="demo" class="mode">离线样本</span>
@@ -347,16 +349,21 @@ const StockChart = defineAsyncComponent(() => import('./StockChart.vue'))
     <main class="content">
       <UpdatePanel :visible="panel === 'settings'" />
       <p v-if="status" class="notice" role="status">{{ status }}</p>
-      <p v-if="panel === 'startup'" class="notice" role="status">正在恢复会话…</p>
-      <form v-else-if="panel === 'login'" class="surface login" @submit.prevent="submitLogin">
-        <h1>登录盯盘管家</h1>
-        <p class="muted">登录后查看你的自选股票。</p>
+      <p v-if="panel === 'startup'" class="notice panel-enter" role="status">正在恢复会话…</p>
+      <form v-else-if="panel === 'login'" class="surface login panel-enter" @submit.prevent="submitLogin">
+        <div class="panel-heading">
+          <h1>登录盯盘管家</h1>
+          <p class="muted">登录后查看你的自选股票。</p>
+        </div>
         <label>账号<input v-model="form.account" required autocomplete="username"></label>
         <label>密码<input v-model="form.password" type="password" required autocomplete="current-password"></label>
         <button class="primary" :disabled="busy">{{ busy ? '正在登录…' : '登录' }}</button>
       </form>
-      <form v-else-if="panel === 'settings'" class="surface settings" @submit.prevent="saveSettings">
-        <h1>应用设置</h1>
+      <form v-else-if="panel === 'settings'" class="surface settings panel-enter" @submit.prevent="saveSettings">
+        <div class="panel-heading">
+          <h1>应用设置</h1>
+          <p class="muted">调整窗口显示与快捷键。</p>
+        </div>
         <label class="setting-row"><span>精简列表</span><input v-model="settings.compact" type="checkbox"></label>
         <label class="setting-row"><span>窗口置顶</span><input v-model="settings.pinned" type="checkbox"></label>
         <label class="setting-row"><span>窗口不透明度</span><input v-model.number="settings.opacity" type="range" min="0" max="100"></label>
@@ -366,13 +373,13 @@ const StockChart = defineAsyncComponent(() => import('./StockChart.vue'))
       </form>
       <StockChart v-else-if="selected" :stock="selected" :initial-period="settings.compact ? 'intraday' : '1d'" @close="selectedKey = ''" />
       <section v-else ref="watchlist" class="watchlist" @scroll.passive="saveListScroll">
-        <form v-if="group" v-show="searchVisible" class="search" @submit.prevent="search" @keydown.esc="toggleSearch">
+        <form v-if="group" v-show="searchVisible" class="search panel-enter" @submit.prevent="search" @keydown.esc="toggleSearch">
           <input ref="searchInput" v-model="query" aria-label="股票名称或代码" placeholder="股票名称或代码">
           <button :disabled="busy">搜索</button>
         </form>
-        <ul v-if="searchVisible && results.length" class="surface results">
+        <ul v-if="searchVisible && results.length" class="surface results panel-enter">
           <li v-for="item in results" :key="symbolKey(item)">
-            <span>{{ item.info_name }} <small>{{ item.info_code }}</small></span>
+            <span class="result-name">{{ item.info_name }} <small>{{ item.info_code }}</small></span>
             <button :disabled="busy" @click="modify('add', item)">添加</button>
           </li>
         </ul>
@@ -405,91 +412,315 @@ const StockChart = defineAsyncComponent(() => import('./StockChart.vue'))
 <style>
 :root {
   color-scheme: light;
-  font: 13px/1.45 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: #272b32;
-  --muted: #646c78;
-  --line: #e7e9ed;
-  --surface: #fff;
-  --accent: #285987;
-  --up: #be3645;
-  --down: #087961;
+  font: 13px/1.45 "IBM Plex Sans", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", sans-serif;
+  color: var(--ink);
+  --ink: #1a2330;
+  --muted: #667284;
+  --line: rgba(26, 35, 48, 0.09);
+  --line-strong: rgba(26, 35, 48, 0.14);
+  --surface: rgba(255, 255, 255, 0.78);
+  --surface-solid: #ffffff;
+  --accent: #1f5f8b;
+  --accent-deep: #174a6d;
+  --accent-soft: rgba(31, 95, 139, 0.1);
+  --up: #d63b4a;
+  --up-soft: rgba(214, 59, 74, 0.1);
+  --down: #0d8a6a;
+  --down-soft: rgba(13, 138, 106, 0.1);
+  --shadow-sm: 0 1px 2px rgba(26, 35, 48, 0.04);
+  --shadow-md: 0 8px 24px rgba(26, 35, 48, 0.06);
+  --radius: 10px;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 * { box-sizing: border-box; }
-body { margin: 0; }
+body {
+  margin: 0;
+  background: transparent;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
 button, input, select {
   font: inherit;
   color: inherit;
-  background: #fff;
-  border: 1px solid #dce0e5;
-  border-radius: 5px;
-  padding: 5px 8px;
+  background: var(--surface-solid);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 6px 9px;
+  transition: background .18s var(--ease), border-color .18s var(--ease), box-shadow .18s var(--ease), color .18s var(--ease), transform .18s var(--ease);
 }
 button { cursor: pointer; white-space: nowrap; }
-button:enabled:hover { background: #edf1f5; }
-button:disabled { cursor: default; opacity: .45; }
+button:enabled:hover { background: #f0f4f8; border-color: rgba(31, 95, 139, 0.28); }
+button:enabled:active { transform: translateY(0.5px); }
+button:disabled { cursor: default; opacity: .42; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 input { min-width: 0; }
+input:focus, select:focus {
+  border-color: rgba(31, 95, 139, 0.45);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  outline: none;
+}
 input::placeholder, .muted, small { color: var(--muted); }
 input[type=checkbox], input[type=range] { accent-color: var(--accent); }
-h1 { margin: 0; font-size: 16px; font-weight: 650; line-height: 1.3; }
+h1 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.02em; line-height: 1.3; }
 p { margin: 0; }
 ul { margin: 0; padding: 0; list-style: none; }
 
-.shell { height: 100vh; display: flex; flex-direction: column; background: rgba(255, 255, 255, var(--opacity)); }
+@keyframes panel-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes glow-drift {
+  0%, 100% { opacity: .9; transform: translate3d(0, 0, 0) scale(1); }
+  50% { opacity: 1; transform: translate3d(2%, -1%, 0) scale(1.03); }
+}
+
+.shell {
+  position: relative;
+  isolation: isolate;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(236, 242, 248, var(--opacity)), rgba(247, 249, 252, var(--opacity)));
+}
+.shell-glow {
+  pointer-events: none;
+  position: absolute;
+  inset: -20% -10% auto;
+  height: 55%;
+  background:
+    radial-gradient(55% 70% at 12% 18%, rgba(31, 95, 139, 0.14), transparent 70%),
+    radial-gradient(45% 55% at 88% 8%, rgba(13, 138, 106, 0.08), transparent 68%);
+  animation: glow-drift 14s ease-in-out infinite;
+  z-index: 0;
+}
+.toolbar, .content { position: relative; z-index: 1; }
 .toolbar {
-  min-height: 43px;
-  padding: 5px 10px;
+  min-height: 44px;
+  padding: 6px 10px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   border-bottom: 1px solid var(--line);
-  background: rgba(247, 248, 250, var(--opacity));
+  background: rgba(255, 255, 255, calc(var(--opacity) * 0.55));
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
 }
-.mode { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.brand {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+.mode {
+  color: var(--accent-deep);
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+}
 .toolbar-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; }
-.icon-button { width: 30px; height: 29px; padding: 0; border: 0; background: transparent; }
-.icon-button img, .quote-actions img { width: 14px; height: 14px; display: block; margin: auto; opacity: .66; }
+.icon-button {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 8px;
+}
+.icon-button:enabled:hover { background: var(--accent-soft); }
+.icon-button img, .quote-actions img { width: 14px; height: 14px; display: block; margin: auto; opacity: .7; }
+.icon-button:enabled:hover img { opacity: .95; }
 .content { display: flex; flex: 1; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; overflow: auto; }
 .content > .notice { margin: 8px 10px 0; }
-.group-select { min-width: 0; max-width: 60%; padding: 4px 7px; font-weight: 600; }
+.group-select {
+  min-width: 0;
+  max-width: 60%;
+  padding: 4px 8px;
+  font-weight: 600;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.8);
+}
 .watchlist { flex: 1; min-width: 0; min-height: 0; overflow: auto; }
-.layout-button { white-space: nowrap; font-size: 11px; padding: 3px 6px; }
-.search { display: flex; gap: 6px; margin: 8px 10px; }
-.search input { flex: 1; }
-.search button { color: var(--accent); }
+.layout-button {
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 8px;
+  color: var(--accent-deep);
+  background: rgba(255, 255, 255, 0.7);
+}
+.layout-button[aria-pressed=true] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.search {
+  display: flex;
+  gap: 6px;
+  margin: 8px 10px;
+}
+.search input {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: var(--shadow-sm);
+}
+.search button {
+  color: var(--accent);
+  font-weight: 600;
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+.search button:enabled:hover {
+  background: rgba(31, 95, 139, 0.16);
+  border-color: transparent;
+}
 .surface { background: var(--surface); }
-.quote-table, .empty { margin: 8px 10px; border: 1px solid var(--line); border-radius: 7px; background: transparent; }
-.notice { padding: 5px 8px; color: #385675; background: #edf3f9; border-radius: 4px; overflow-wrap: anywhere; }
+.quote-table, .empty, .results, .login, .settings {
+  margin: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.notice {
+  padding: 7px 10px;
+  color: var(--accent-deep);
+  background: linear-gradient(180deg, #eef5fb, #e8f0f8);
+  border: 1px solid rgba(31, 95, 139, 0.12);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
 .watchlist > .notice { margin: 6px 10px; }
-.empty { padding: 20px 10px; text-align: center; color: var(--muted); }
-.quote-row { display: grid; grid-template-columns: minmax(0, 1fr) 40px minmax(55px, auto) auto; align-items: center; gap: 8px; padding: 6px 9px; }
+.empty {
+  padding: 28px 12px;
+  text-align: center;
+  color: var(--muted);
+  font-weight: 500;
+}
+.quote-table { margin-top: 6px; overflow: hidden; }
+.quote-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px minmax(58px, auto) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  transition: background .18s var(--ease);
+}
 .quote-row + .quote-row { border-top: 1px solid var(--line); }
-.quote-row:hover { background: rgba(45, 87, 135, .05); }
-.stock { display: grid; justify-items: start; min-width: 0; padding: 2px; text-align: left; background: transparent; border: 0; }
-.stock-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
-.stock small { font-size: 10px; font-variant-numeric: tabular-nums; }
-.quote-values { display: grid; text-align: right; font-variant-numeric: tabular-nums; }
+.quote-row:hover { background: rgba(31, 95, 139, 0.05); }
+.stock {
+  display: grid;
+  justify-items: start;
+  min-width: 0;
+  padding: 2px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+}
+.stock:enabled:hover { background: transparent; border-color: transparent; }
+.stock-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.stock small {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+.quote-values { display: grid; text-align: right; font-variant-numeric: tabular-nums; gap: 1px; }
 .quote-price { font-size: 11px; color: var(--muted); }
-.quote-change { font-size: 13px; font-weight: 650; }
-.quote-change.up { color: var(--up); }
-.quote-change.down { color: var(--down); }
-.quote-actions { display: flex; gap: 1px; }
-.quote-actions button { width: 23px; height: 24px; border: 0; background: transparent; padding: 0; }
+.quote-change {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  transition: color .2s var(--ease);
+}
+.quote-change.up {
+  color: var(--up);
+  text-shadow: 0 0 18px rgba(214, 59, 74, 0.18);
+}
+.quote-change.down {
+  color: var(--down);
+  text-shadow: 0 0 18px rgba(13, 138, 106, 0.16);
+}
+.quote-actions { display: flex; gap: 2px; opacity: 0.55; transition: opacity .18s var(--ease); }
+.quote-row:hover .quote-actions { opacity: 1; }
+.quote-actions button {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  border-radius: 7px;
+}
+.quote-actions button:enabled:hover { background: var(--accent-soft); }
 .quote-actions img { width: 12px; height: 12px; }
-.quote-actions .remove:enabled:hover { background: #fbe8eb; }
-.compact .quote-row { grid-template-columns: minmax(0, 1fr) auto; padding-block: 4px; }
+.quote-actions .remove:enabled:hover { background: var(--up-soft); }
+.compact .quote-row { grid-template-columns: minmax(0, 1fr) auto; padding-block: 5px; }
 .compact .stock small { display: none; }
-.results { margin: 0 10px 6px; border: 1px solid var(--line); border-radius: 5px; }
-.results li { padding: 5px 8px; display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+.results { margin: 0 10px 6px; }
+.results li {
+  padding: 7px 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
 .results li + li { border-top: 1px solid var(--line); }
+.result-name { min-width: 0; font-weight: 600; }
+.results button {
+  color: var(--accent);
+  font-weight: 600;
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+.results button:enabled:hover { background: rgba(31, 95, 139, 0.16); }
 
-.login, .settings { display: grid; gap: 10px; margin: 4px 10px 10px; padding: 12px; border: 1px solid var(--line); border-radius: 6px; }
-.login label, .import-settings { display: grid; gap: 4px; }
-.setting-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 29px; }
-.setting-row input:not([type=checkbox]) { width: 46%; }
+.login, .settings {
+  display: grid;
+  gap: 12px;
+  margin: 10px;
+  padding: 16px;
+  box-shadow: var(--shadow-md);
+}
+.panel-heading { display: grid; gap: 4px; }
+.panel-enter { animation: panel-in .28s var(--ease) both; }
+.login label, .import-settings { display: grid; gap: 5px; font-weight: 500; }
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 32px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+  font-weight: 500;
+}
+.setting-row:last-of-type { border-bottom: 0; }
+.setting-row input:not([type=checkbox]) { width: 48%; }
 .import-settings input { width: 100%; font-size: 11px; }
-.primary { background: #285987; border-color: #285987; color: #fff; font-weight: 650; }
-.primary:enabled:hover { background: #214b73; }
-.update-panel { padding-inline: 10px; }
+.primary {
+  background: linear-gradient(180deg, #256891, var(--accent));
+  border-color: transparent;
+  color: #fff;
+  font-weight: 650;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.18) inset, 0 6px 14px rgba(31, 95, 139, 0.22);
+}
+.primary:enabled:hover {
+  background: linear-gradient(180deg, #2a729d, var(--accent-deep));
+  border-color: transparent;
+}
 </style>

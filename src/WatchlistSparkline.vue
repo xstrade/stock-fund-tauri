@@ -101,6 +101,8 @@ onUnmounted(() => {
   document.removeEventListener('visibilitychange', updatePageVisibility)
 })
 
+const gradientId = computed(() => `spark-fill-${symbolKey(props.row).replace(/\W/g, '-')}`)
+
 const points = computed(() => {
   const values = prices.value
   if (values.length < 2) return ''
@@ -113,6 +115,12 @@ const points = computed(() => {
   }).join(' ')
 })
 
+const areaPoints = computed(() => {
+  if (!points.value) return ''
+  const coords = points.value.split(' ')
+  return `${coords[0]} ${points.value} ${coords[coords.length - 1].split(',')[0]},20 1,20`
+})
+
 const trend = computed(() => {
   const values = prices.value
   const change = values[values.length - 1] - values[0]
@@ -122,12 +130,26 @@ const trend = computed(() => {
 
 <template>
   <svg ref="element" class="sparkline" :class="trend" viewBox="0 0 50 20" aria-hidden="true">
-    <polyline v-if="points" :points="points" fill="none" stroke="currentColor" stroke-width="1.2" />
+    <defs>
+      <linearGradient :id="gradientId" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="currentColor" stop-opacity="0.28" />
+        <stop offset="100%" stop-color="currentColor" stop-opacity="0" />
+      </linearGradient>
+    </defs>
+    <polygon v-if="areaPoints" :points="areaPoints" :fill="`url(#${gradientId})`" />
+    <polyline v-if="points" :points="points" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
   </svg>
 </template>
 
 <style scoped>
-.sparkline { display: block; flex: 0 0 40px; width: 40px; height: 16px; color: #697689; }
+.sparkline {
+  display: block;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 18px;
+  color: #7a8798;
+  transition: color .2s ease;
+}
 .rising { color: var(--up); }
 .falling { color: var(--down); }
 </style>

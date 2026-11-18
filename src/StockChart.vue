@@ -24,15 +24,24 @@ let stop
 onMounted(() => {
   chart = createChart(surface.value, {
     autoSize: true,
-    layout: { attributionLogo: false, background: { color: '#ffffff' }, textColor: '#586473' },
-    grid: { vertLines: { color: '#eef0f3' }, horzLines: { color: '#eef0f3' } },
+    layout: {
+      attributionLogo: false,
+      background: { color: 'transparent' },
+      textColor: '#667284',
+      fontFamily: '"IBM Plex Sans", "Noto Sans SC", sans-serif',
+    },
+    grid: { vertLines: { color: 'rgba(26, 35, 48, 0.05)' }, horzLines: { color: 'rgba(26, 35, 48, 0.05)' } },
+    crosshair: {
+      vertLine: { color: 'rgba(31, 95, 139, 0.28)', width: 1, style: 2 },
+      horzLine: { color: 'rgba(31, 95, 139, 0.28)', width: 1, style: 2 },
+    },
   })
   candles = chart.addSeries(CandlestickSeries, {
-    upColor: '#c93f4f', downColor: '#14866b',
-    borderVisible: false, wickUpColor: '#c93f4f', wickDownColor: '#14866b',
+    upColor: '#d63b4a', downColor: '#0d8a6a',
+    borderVisible: false, wickUpColor: '#d63b4a', wickDownColor: '#0d8a6a',
   })
-  average = chart.addSeries(LineSeries, { color: '#ad7528', lineWidth: 1 })
-  intraday = chart.addSeries(LineSeries, { color: '#356fa7', lineWidth: 2, visible: false })
+  average = chart.addSeries(LineSeries, { color: '#b8842d', lineWidth: 1 })
+  intraday = chart.addSeries(LineSeries, { color: '#1f5f8b', lineWidth: 2, visible: false })
   volume = chart.addSeries(HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: '' })
   volume.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } })
   candles.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: 0.25 } })
@@ -71,7 +80,7 @@ onMounted(() => {
         }
         if (showIntraday) intraday.setData(rows.map((row) => ({ time: row.time, value: row.close })))
         else candles.setData(rows)
-        volume.setData(rows.filter((row) => row.volume !== null).map((row) => ({ time: row.time, value: row.volume, color: row.close >= row.open ? '#a64e5c' : '#297d68' })))
+        volume.setData(rows.filter((row) => row.volume !== null).map((row) => ({ time: row.time, value: row.volume, color: row.close >= row.open ? 'rgba(214, 59, 74, 0.55)' : 'rgba(13, 138, 106, 0.55)' })))
         if (!showIntraday) average.setData(rows.slice(4).map((row, i) => ({ time: row.time, value: rows.slice(i, i + 5).reduce((sum, item) => sum + item.close, 0) / 5 })))
         if (first) chart.timeScale().fitContent()
         status.value = rows.length ? '' : '暂无历史行情'
@@ -101,9 +110,9 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section class="chart">
+  <section class="chart panel-enter">
     <div class="chart-heading">
-      <div>
+      <div class="chart-title">
         <h1>{{ stock.info_name }}</h1>
         <small>{{ stock.info_code }}</small>
       </div>
@@ -112,21 +121,99 @@ onUnmounted(() => {
     <div class="periods" role="group" aria-label="图表周期">
       <button v-for="[value, label] in periods" :key="value" type="button" :aria-pressed="period === value" @click="period = value">{{ label }}</button>
     </div>
-    <p v-if="status" role="status">{{ status }}</p>
+    <p v-if="status" class="chart-status" role="status">{{ status }}</p>
     <div ref="surface" class="chart-surface"></div>
     <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer" @click.prevent="openCredit">图表由 TradingView Lightweight Charts 提供</a>
   </section>
 </template>
 
 <style scoped>
-.chart { display: flex; flex: 1; flex-direction: column; min-width: 0; gap: 7px; padding: 8px 10px; }
+.chart {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  gap: 8px;
+  padding: 8px 10px 10px;
+  animation: panel-in .28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes panel-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 .chart-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.chart-heading h1 { overflow-wrap: anywhere; }
-.chart-back { display: flex; align-items: center; gap: 2px; color: var(--accent); font-size: 11px; }
+.chart-title { display: grid; gap: 1px; min-width: 0; }
+.chart-heading h1 { overflow-wrap: anywhere; letter-spacing: -0.02em; }
+.chart-title small {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+.chart-back {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--accent-soft);
+  border-color: transparent;
+  border-radius: 8px;
+  padding: 4px 9px;
+}
+.chart-back:enabled:hover {
+  background: rgba(31, 95, 139, 0.16);
+  border-color: transparent;
+}
 .chart-back img { width: 13px; height: 13px; }
-.periods { display: flex; gap: 3px; padding: 3px; border-radius: 5px; background: #f5f6f8; border: 1px solid var(--line); }
-.periods button { flex: 1; padding: 4px; border: 0; background: transparent; color: var(--muted); }
-.periods button[aria-pressed=true] { background: #e3ebf4; color: #285987; }
-.chart-surface { flex: 1; min-height: 250px; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
-a { align-self: flex-start; font-size: 10px; color: var(--muted); }
+.periods {
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-sm);
+}
+.periods button {
+  flex: 1;
+  padding: 5px 4px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 600;
+}
+.periods button:enabled:hover {
+  background: rgba(31, 95, 139, 0.06);
+  border-color: transparent;
+}
+.periods button[aria-pressed=true] {
+  background: linear-gradient(180deg, #256891, var(--accent));
+  color: #fff;
+  box-shadow: 0 4px 10px rgba(31, 95, 139, 0.2);
+}
+.chart-status {
+  padding: 6px 9px;
+  color: var(--accent-deep);
+  background: linear-gradient(180deg, #eef5fb, #e8f0f8);
+  border: 1px solid rgba(31, 95, 139, 0.12);
+  border-radius: 8px;
+}
+.chart-surface {
+  flex: 1;
+  min-height: 250px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: var(--shadow-sm);
+}
+a {
+  align-self: flex-start;
+  font-size: 10px;
+  color: var(--muted);
+  text-decoration: none;
+  transition: color .18s ease;
+}
+a:hover { color: var(--accent); }
 </style>

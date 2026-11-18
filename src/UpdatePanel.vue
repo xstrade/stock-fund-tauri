@@ -62,26 +62,70 @@ onMounted(check)
     <p v-else-if="phase === 'current'" role="status">当前已是最新版本。</p>
     <template v-else-if="phase === 'installed'">
       <p role="status">更新安装完成。</p>
-      <button type="button" :disabled="restarting" @click="restart">重新启动</button>
+      <button type="button" class="update-action" :disabled="restarting" @click="restart">重新启动</button>
     </template>
     <template v-if="update">
-      <p>发现新版本 {{ update.version }}</p>
+      <p class="update-title">发现新版本 {{ update.version }}</p>
       <p v-if="visible && update.notes" class="update-notes">{{ update.notes }}</p>
-      <button type="button" :disabled="phase === 'installing'" @click="install">
+      <button type="button" class="update-action" :disabled="phase === 'installing'" @click="install">
         {{ phase === 'installing' ? '正在下载并验证签名…' : '下载并安装' }}
       </button>
     </template>
-    <p v-if="failure" role="alert">{{ failure }}</p>
+    <p v-if="failure" class="update-failure" role="alert">{{ failure }}</p>
     <button
       v-if="visible && ['idle', 'current', 'available'].includes(phase)"
       type="button"
+      class="update-check"
       @click="check"
     >检查更新</button>
   </section>
 </template>
 
 <style scoped>
-.update-panel { margin-block: 8px; }
-.update-panel button { margin-inline-end: 6px; }
-.update-notes { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 7rem; overflow: auto; }
+.update-panel {
+  margin: 8px 10px 0;
+  padding: 10px 12px;
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: var(--shadow-sm);
+  color: var(--accent-deep);
+}
+.update-title { font-weight: 650; color: var(--ink); }
+.update-action {
+  justify-self: start;
+  color: #fff;
+  font-weight: 650;
+  background: linear-gradient(180deg, #256891, var(--accent));
+  border-color: transparent;
+  box-shadow: 0 6px 14px rgba(31, 95, 139, 0.18);
+}
+.update-action:enabled:hover {
+  background: linear-gradient(180deg, #2a729d, var(--accent-deep));
+  border-color: transparent;
+}
+.update-check {
+  justify-self: start;
+  color: var(--accent);
+  font-weight: 600;
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+.update-check:enabled:hover {
+  background: rgba(31, 95, 139, 0.16);
+  border-color: transparent;
+}
+.update-notes {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 7rem;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(31, 95, 139, 0.05);
+  color: var(--muted);
+}
+.update-failure { color: var(--up); }
 </style>
