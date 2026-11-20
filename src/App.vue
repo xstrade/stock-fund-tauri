@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { desktopCommand, isTauri, listenTray, resizeWindow, windowAction } from './desktop'
+import { desktopCommand, isTauri, listenTray, setWindowLayout, windowAction } from './desktop'
 import { normalizeShortcut, shortcutFromEvent } from './shortcuts'
 import { useTrayIcon } from './trayIcon'
 import WatchlistSparkline from './WatchlistSparkline.vue'
@@ -8,6 +8,8 @@ import UpdatePanel from './UpdatePanel.vue'
 import settingsIcon from './icons/settings.svg'
 import searchIcon from './icons/search.svg'
 import pinIcon from './icons/pin.svg'
+import minimizeIcon from './icons/minus.svg'
+import closeIcon from './icons/x.svg'
 import deleteIcon from './icons/trash.svg'
 import {
   addSymbol, applyQuotes, deleteSymbol, demo, loadGroups, login,
@@ -79,7 +81,7 @@ let pendingResize = Promise.resolve()
 watch(compactList, (compact) => {
   pendingResize = pendingResize.then(async () => {
     if (alive && compact === compactList.value) {
-      await resizeWindow(compact ? 300 : 390, compact ? 280 : 510)
+      await setWindowLayout(compact)
     }
   }).catch(report)
 }, { immediate: true })
@@ -107,6 +109,15 @@ function saveListScroll(event: Event) {
 function toggleCompact() {
   settings.value.compact = !settings.value.compact
   localStorage.setItem('desktop-settings', JSON.stringify(settings.value))
+}
+
+function toggleWindowPin() {
+  return run(async () => {
+    const pinned = !settings.value.pinned
+    await windowAction('setAlwaysOnTop', pinned)
+    settings.value.pinned = pinned
+    localStorage.setItem('desktop-settings', JSON.stringify(settings.value))
+  })
 }
 const form = ref({ account: '', password: '' })
 const query = ref('')
@@ -435,29 +446,48 @@ onUnmounted(() => {
 })
 
 const quoteNumber = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+const compactQuoteNumber = new Intl.NumberFormat('zh-CN', { useGrouping: false, maximumFractionDigits: 4 })
 const percentNumber = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 type QuoteValue = number | string | null | undefined
 const hasQuote = (value: QuoteValue): value is number | string => value != null && value !== '' && Number.isFinite(Number(value))
-const formatPrice = (value: QuoteValue) => hasQuote(value) ? quoteNumber.format(Number(value)) : '–'
+const formatPrice = (value: QuoteValue) => hasQuote(value)
+  ? (compactList.value ? compactQuoteNumber : quoteNumber).format(Number(value))
+  : '–'
 const formatChange = (value: QuoteValue) => hasQuote(value) ? `${Number(value) > 0 ? '+' : ''}${percentNumber.format(Number(value))}%` : '–'
 
 const StockChart = defineAsyncComponent(() => import('./StockChart.vue'))
 </script>
 
 <template>
-  <div class="shell" :class="{ compact: settings.compact }" :style="{ '--opacity': (panel === 'settings' ? settingsDraft.opacity : settings.opacity) / 100 }">
-    <div class="shell-glow" aria-hidden="true"></div>
-    <header class="toolbar" aria-label="应用工具栏">
-      <select v-if="listVisible" v-model="groupId" class="group-select" aria-label="分组" :disabled="busy || !groups.length">
-        <option v-for="item in groups" :key="item.group_id" :value="item.group_id">{{ item.group_name }}</option>
-      </select>
-      <p v-else class="brand">盯盘管家</p>
-      <div class="toolbar-actions">
-        <button v-if="listVisible" type="button" class="layout-button" aria-label="精简模式" :aria-pressed="compactList" @click="toggleCompact">{{ compactList ? '展开' : '精简' }}</button>
-        <span v-if="demo" class="mode">离线样本</span>
-        <button v-if="listVisible" type="button" class="icon-button" :aria-expanded="searchVisible" :disabled="!group" aria-label="搜索股票" title="搜索股票" @click="toggleSearch"><img :src="searchIcon" alt=""></button>
-        <button type="button" class="icon-button" :disabled="panel === 'startup'" aria-label="设置" title="设置" @click="openSettings"><img :src="settingsIcon" alt=""></button>
-      </div>
+  <div class="shell" :class="{ compact: compactList }" :style="{ '--opacity': (panel === 'settings' ? settingsDraft.opacity : settings.opacity) / 100 }">
+    <div v-if="!compactList" class="shell-glow" aria-hidden="true"></div>
+    <header class="toolbar" aria-label="应用工具栏" :data-tauri-drag-region="compactList ? '' : null">
+      <template v-if="compactList">
+        <div class="compact-controls">
+          <select v-model="groupId" class="group-select" aria-label="分组" title="切换分组" :disabled="busy || !groups.length">
+            <option v-for="item in groups" :key="item.group_id" :value="item.group_id">{{ item.group_name }}</option>
+          </select>
+          <button type="button" class="icon-button" aria-label="精简模式" aria-pressed="true" title="展开完整模式" @click="toggleCompact"><img :src="settingsIcon" alt=""></button>
+        </div>
+        <div class="toolbar-actions">
+          <button type="button" class="icon-button" :aria-expanded="searchVisible" :disabled="!group" aria-label="搜索股票" title="搜索股票" @click="toggleSearch"><img :src="searchIcon" alt=""></button>
+          <button type="button" class="icon-button" :aria-pressed="settings.pinned" :disabled="busy" aria-label="窗口置顶" title="窗口置顶" @click="toggleWindowPin"><img :src="pinIcon" alt=""></button>
+          <button type="button" class="icon-button" aria-label="最小化" title="最小化" @click="windowAction('minimize').catch(report)"><img :src="minimizeIcon" alt=""></button>
+          <button type="button" class="icon-button" aria-label="隐藏到托盘" title="隐藏到托盘" @click="windowAction('close').catch(report)"><img :src="closeIcon" alt=""></button>
+        </div>
+      </template>
+      <template v-else>
+        <select v-if="listVisible" v-model="groupId" class="group-select" aria-label="分组" :disabled="busy || !groups.length">
+          <option v-for="item in groups" :key="item.group_id" :value="item.group_id">{{ item.group_name }}</option>
+        </select>
+        <p v-else class="brand">盯盘管家</p>
+        <div class="toolbar-actions">
+          <button v-if="listVisible" type="button" class="layout-button" aria-label="精简模式" aria-pressed="false" @click="toggleCompact">精简</button>
+          <span v-if="demo" class="mode">离线样本</span>
+          <button v-if="listVisible" type="button" class="icon-button" :aria-expanded="searchVisible" :disabled="!group" aria-label="搜索股票" title="搜索股票" @click="toggleSearch"><img :src="searchIcon" alt=""></button>
+          <button type="button" class="icon-button" :disabled="panel === 'startup'" aria-label="设置" title="设置" @click="openSettings"><img :src="settingsIcon" alt=""></button>
+        </div>
+      </template>
     </header>
 
     <main class="content">
@@ -523,15 +553,15 @@ const StockChart = defineAsyncComponent(() => import('./StockChart.vue'))
           <ul class="quotes">
             <li v-for="(row, index) in rows" :key="symbolKey(row)" class="quote-row">
               <button class="stock" @click="selectedKey = symbolKey(row)">
-                <span class="stock-name">{{ row.info_name }}</span>
-                <small>{{ row.info_code }}</small>
+                <span class="stock-name" :title="compactList ? row.info_name : undefined">{{ row.info_name }}</span>
+                <small v-if="!compactList">{{ row.info_code }}</small>
               </button>
-              <WatchlistSparkline v-if="!settings.compact" :row="row" :user="user" :group-id="groupId" />
+              <WatchlistSparkline v-if="!compactList" :row="row" :user="user" :group-id="groupId" />
               <div class="quote-values">
                 <span class="quote-change" :class="{ down: Number(row.zdf) < 0, up: Number(row.zdf) > 0 }">{{ formatChange(row.zdf) }}</span>
                 <span class="quote-price">{{ formatPrice(row.price) }}</span>
               </div>
-              <div v-if="!settings.compact" class="quote-actions">
+              <div v-if="!compactList" class="quote-actions">
                 <button :disabled="busy || index === 0" aria-label="置顶" title="置顶" @click="modify('pin', row)"><img :src="pinIcon" alt=""></button>
                 <button class="remove" :disabled="busy" aria-label="删除" title="删除" @click="modify('delete', row)"><img :src="deleteIcon" alt=""></button>
               </div>
@@ -690,11 +720,6 @@ ul { margin: 0; padding: 0; list-style: none; }
   color: var(--accent-deep);
   background: rgba(255, 255, 255, 0.7);
 }
-.layout-button[aria-pressed=true] {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-}
 .search {
   display: flex;
   gap: 6px;
@@ -803,8 +828,99 @@ ul { margin: 0; padding: 0; list-style: none; }
 .quote-actions button:enabled:hover { background: var(--accent-soft); }
 .quote-actions img { width: 12px; height: 12px; }
 .quote-actions .remove:enabled:hover { background: var(--up-soft); }
-.compact .quote-row { grid-template-columns: minmax(0, 1fr) auto; padding-block: 5px; }
-.compact .stock small { display: none; }
+.compact {
+  --compact-text: #bdbdbd;
+  padding: 0 28px 36px 22px;
+  background: transparent;
+  color: var(--compact-text);
+  text-shadow: 0 1px 2px rgb(0 0 0 / 80%);
+}
+.compact .toolbar {
+  min-height: 53px;
+  padding: 0 4px 0 0;
+  align-items: end;
+  gap: 0;
+  border-color: #ddd;
+  background: transparent;
+  backdrop-filter: none;
+}
+.compact .toolbar-actions, .compact-controls { display: flex; gap: 0; }
+.compact-controls { opacity: 0; transition: opacity .18s var(--ease); }
+.compact-controls:hover, .compact-controls:focus-within { opacity: 1; }
+.compact .icon-button {
+  width: 32px;
+  height: 28px;
+  border-radius: 4px;
+}
+.compact .icon-button img {
+  width: 18px;
+  height: 18px;
+  opacity: 1;
+  filter: invert(1) drop-shadow(0 1px 1px rgb(0 0 0 / 80%));
+}
+.compact .icon-button:enabled:hover, .compact .icon-button[aria-pressed=true] {
+  background: rgb(255 255 255 / 15%);
+}
+.compact-controls .icon-button, .compact .group-select { width: 24px; }
+.compact-controls .icon-button img { width: 14px; height: 14px; }
+.compact .group-select {
+  max-width: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0;
+}
+.compact .group-select option {
+  background: var(--surface-solid);
+  color: var(--ink);
+  font-size: 13px;
+}
+.compact .watchlist { scrollbar-width: none; }
+.compact .quote-table, .compact .empty, .compact .results, .compact .notice {
+  margin-inline: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  color: inherit;
+}
+.compact .quote-table { margin-block: 0; }
+.compact .quote-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 23px;
+  padding: 0 8px;
+  border: 0;
+}
+.compact .quote-row:hover { background: rgb(255 255 255 / 8%); }
+.compact .stock { padding: 0; text-shadow: inherit; }
+.compact .stock-name { font-size: 14px; font-weight: 500; }
+.compact .quote-values { grid-template-columns: 59px 47px; gap: 3px; }
+.compact .quote-price, .compact .quote-change {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: inherit;
+  text-shadow: inherit;
+}
+.compact .quote-price { grid-area: 1 / 1; }
+.compact .search { margin-inline: 0; }
+.compact .search input {
+  border-color: rgb(255 255 255 / 45%);
+  background: transparent;
+  box-shadow: none;
+  text-shadow: inherit;
+}
+.compact .search input::placeholder, .compact .result-name small,
+.compact .search button, .compact .results button { color: inherit; }
+.compact .search button, .compact .results button {
+  background: transparent;
+  text-shadow: inherit;
+}
+.compact .search button:enabled:hover, .compact .results button:enabled:hover {
+  background: rgb(255 255 255 / 15%);
+}
 .results { margin: 0 10px 6px; }
 .results li {
   padding: 7px 10px;

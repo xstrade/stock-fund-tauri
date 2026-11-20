@@ -8,14 +8,21 @@ export function desktopCommand<T>(command: string, args?: Record<string, unknown
   return isTauri() ? invoke<T>(command, args) : Promise.resolve(undefined)
 }
 
-export function windowAction(...[action, value]: ['setAlwaysOnTop', boolean] | ['setSize', LogicalSize]) {
+export function windowAction(...[action, value]: ['setAlwaysOnTop', boolean] | ['minimize' | 'close']) {
   if (!isTauri()) return Promise.resolve()
   const window = getCurrentWindow()
-  return action === 'setSize' ? window.setSize(value) : window.setAlwaysOnTop(value)
+  return action === 'setAlwaysOnTop' ? window.setAlwaysOnTop(value) : window[action]()
 }
 
-export function resizeWindow(width: number, height: number) {
-  return windowAction('setSize', new LogicalSize(width, height))
+export async function setWindowLayout(compact: boolean) {
+  if (!isTauri()) return
+  const window = getCurrentWindow()
+  const size = compact ? new LogicalSize(230, 365) : new LogicalSize(390, 510)
+  const minimum = compact ? new LogicalSize(230, 260) : new LogicalSize(290, 260)
+  await window.setDecorations(!compact)
+  await window.setShadow(!compact)
+  await window.setMinSize(minimum)
+  await window.setSize(size)
 }
 
 type TrayAction = 'settings' | 'watchlist' | 'watchlist-focused' | 'login'
