@@ -13,6 +13,8 @@ use tauri::{
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
+const DEFAULT_TRAY_ICON: &[u8] = include_bytes!("../tray.png");
+
 fn show_main(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
@@ -26,6 +28,24 @@ fn update_tray(app: AppHandle, tooltip: String) -> Result<(), String> {
     app.tray_by_id("quotes")
         .ok_or("托盘尚未初始化")?
         .set_tooltip(Some(tooltip))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn set_tray_icon(app: AppHandle, rgba: Option<Vec<u8>>) -> Result<(), String> {
+    const SIZE: u32 = 32;
+    let is_default = rgba.is_none();
+    let icon = match rgba {
+        Some(pixels) if pixels.len() == (SIZE * SIZE * 4) as usize => {
+            Image::new_owned(pixels, SIZE, SIZE)
+        }
+        Some(_) => return Err("菜单栏图标尺寸无效".into()),
+        None => Image::from_bytes(DEFAULT_TRAY_ICON).map_err(|error| error.to_string())?,
+    };
+    let tray = app.tray_by_id("quotes").ok_or("托盘尚未初始化")?;
+    tray.set_icon_with_as_template(Some(icon), is_default)
+        .map_err(|error| error.to_string())?;
+    tray.set_title(is_default.then_some("管家"))
         .map_err(|error| error.to_string())
 }
 
@@ -45,7 +65,9 @@ fn set_shortcut(
     }
     let manager = app.global_shortcut();
     if let Some(next) = next {
-        manager.register(next).map_err(|error| error.to_string())?;
+        manager
+            .register(next)
+            .map_err(|error| format!("无法注册唤出自选页面的快捷键：{error}"))?;
     }
     if let Some(previous) = *current {
         if let Err(error) = manager.unregister(previous) {
@@ -63,7 +85,7 @@ fn set_shortcut(
 fn open_chart_credit(app: AppHandle) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
     app.opener()
-        .open_url("https://www.tradingview.com/", None::<&str>)
+        .open_url("https://github.com/jones2000/HQChart", None::<&str>)
         .map_err(|error| error.to_string())
 }
 
@@ -77,21 +99,23 @@ fn main() {
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _, event| {
                     if event.state() == ShortcutState::Pressed {
-                        if let Some(window) = app.get_webview_window("main") {
-                            if window.is_visible().unwrap_or(false)
-                                && !window.is_minimized().unwrap_or(false)
-                            {
-                                let _ = window.hide();
-                            } else {
-                                show_main(app);
-                            }
-                        }
+                        let focused = app
+                            .get_webview_window("main")
+                            .is_some_and(|window| window.is_focused().unwrap_or(false));
+                        show_main(app);
+                        let action = if focused {
+                            "watchlist-focused"
+                        } else {
+                            "watchlist"
+                        };
+                        let _ = app.emit_to("main", "tray-action", action);
                     }
                 })
                 .build(),
         )
         .invoke_handler(tauri::generate_handler![
             update_tray,
+            set_tray_icon,
             set_shortcut,
             open_chart_credit,
             session::load_session,
@@ -109,7 +133,7 @@ fn main() {
             let quit = MenuItem::with_id(app, "quit", "退出管家", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &settings, &login, &quit])?;
             TrayIconBuilder::with_id("quotes")
-                .icon(Image::from_bytes(include_bytes!("../tray.png"))?)
+                .icon(Image::from_bytes(DEFAULT_TRAY_ICON)?)
                 .icon_as_template(true)
                 .title("管家")
                 .tooltip("盯盘管家")

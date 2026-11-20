@@ -1,6 +1,8 @@
-<script setup>
+<script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { desktopCommand, listenTray, resizeWindow, windowAction } from './desktop.js'
+import { desktopCommand, isTauri, listenTray, resizeWindow, windowAction } from './desktop'
+import { normalizeShortcut, shortcutFromEvent } from './shortcuts'
+import { useTrayIcon } from './trayIcon'
 import WatchlistSparkline from './WatchlistSparkline.vue'
 import UpdatePanel from './UpdatePanel.vue'
 import settingsIcon from './icons/settings.svg'
@@ -10,30 +12,60 @@ import deleteIcon from './icons/trash.svg'
 import {
   addSymbol, applyQuotes, deleteSymbol, demo, loadGroups, login,
   loadQuotes, saveDemoGroups, searchSymbols, sessionScope, sortSymbols, symbolKey,
-} from './market.js'
+} from './market'
+import type { GroupId, Session, Stock, WatchlistGroup } from './market'
 
-const defaults = { compact: false, pinned: false, opacity: 95, shortcut: 'Alt+Z' }
-function readSettings() {
+type Panel = 'startup' | 'login' | 'list' | 'settings'
+type LegacySettings = {
+  config?: { stockView?: unknown; startToTop?: unknown; viewTransparency?: unknown }
+  shortcutKey?: { windowShow?: { switch?: unknown; keyPad?: unknown } }
+}
+
+const defaults = {
+  compact: false, pinned: false, opacity: 95,
+  shortcut: 'Alt+Z', previousGroupShortcut: '', nextGroupShortcut: '',
+}
+const shortcutFields = [
+  ['shortcut', '唤出自选页面'],
+  ['previousGroupShortcut', '向左切换分组'],
+  ['nextGroupShortcut', '向右切换分组'],
+] as const
+type ShortcutField = typeof shortcutFields[number][0]
+
+function isShortcutField(value: unknown): value is ShortcutField {
+  return shortcutFields.some(([field]) => field === value)
+}
+
+function readSettings(): typeof defaults {
   try {
-    return { ...defaults, ...JSON.parse(localStorage.getItem('desktop-settings') || '{}') }
+    const stored: Partial<typeof defaults> | null = JSON.parse(localStorage.getItem('desktop-settings') || '{}')
+    return { ...defaults, ...stored }
   } catch {
     return { ...defaults }
   }
 }
 const settings = ref(readSettings())
-const user = ref(null)
+const settingsDraft = ref({ ...settings.value })
+const {
+  preference: trayIcon, preview: trayIconPreview, pending: trayIconPending,
+  error: trayIconError, trayOptions, select: selectTrayIcon, upload: uploadTrayIcon,
+} = useTrayIcon()
+const activeShortcuts = computed(() => Object.fromEntries(shortcutFields.map(([field]) => [
+  field, normalizeShortcut(settings.value[field]),
+])))
+const user = ref<Session | null>(null)
 const skipRestoreKey = `skip-session-restore:${sessionScope}`
-const groups = ref([])
-const groupId = ref(null)
+const groups = ref<WatchlistGroup[]>([])
+const groupId = ref<GroupId | null>(null)
 const group = computed(() => groups.value.find((item) => item.group_id === groupId.value))
 const rows = computed(() => group.value?.position ?? [])
 const selectedKey = ref('')
 const selected = computed(() => rows.value.find((item) => symbolKey(item) === selectedKey.value))
 const subscription = computed(() => rows.value.map(symbolKey).join(','))
-const panel = ref(demo ? 'list' : 'startup')
+const panel = ref<Panel>(demo ? 'list' : 'startup')
 const listVisible = computed(() => panel.value === 'list' && !selected.value)
 const compactList = computed(() => listVisible.value && settings.value.compact)
-const watchlist = ref(null)
+const watchlist = ref<HTMLElement | null>(null)
 const watchlistScope = computed(() => demo ? 'watchlist:demo' : user.value
   ? `watchlist:${sessionScope}:${user.value.accountId}`
   : null)
@@ -65,9 +97,10 @@ watch([watchlist, scrollKey], async ([list, key], _, onCleanup) => {
   if (active) list.scrollTop = savedTop
 }, { flush: 'post' })
 
-function saveListScroll(event) {
-  if (event.currentTarget === watchlist.value && scrollKey.value) {
-    localStorage.setItem(scrollKey.value, String(event.currentTarget.scrollTop))
+function saveListScroll(event: Event) {
+  const list = watchlist.value
+  if (list && event.currentTarget === list && scrollKey.value) {
+    localStorage.setItem(scrollKey.value, String(list.scrollTop))
   }
 }
 
@@ -78,7 +111,7 @@ function toggleCompact() {
 const form = ref({ account: '', password: '' })
 const query = ref('')
 const searchVisible = ref(false)
-const searchInput = ref(null)
+const searchInput = ref<HTMLInputElement | null>(null)
 
 async function toggleSearch() {
   searchVisible.value = !searchVisible.value
@@ -87,23 +120,28 @@ async function toggleSearch() {
     searchInput.value?.focus()
   }
 }
-const results = ref([])
+const results = ref<Stock[]>([])
 const status = ref('')
 const quoteStatus = ref('')
 const busy = ref(false)
-let unlisten
+let unlisten: (() => void) | undefined
 
-function expired(error) {
-  return ['001', '002'].includes(error.code)
+function expired(error: unknown) {
+  const code = (error as { code?: unknown } | null)?.code
+  return code === '001' || code === '002'
 }
 
-async function report(error) {
+function errorMessage(error: unknown) {
+  return (error as { message?: string } | null)?.message || String(error)
+}
+
+async function report(error: unknown) {
   if (user.value && expired(error)) await signOut()
 
-  status.value = error.message || String(error)
+  status.value = errorMessage(error)
 }
 
-async function run(action) {
+async function run(action: () => Promise<void>) {
   if (busy.value) return
   busy.value = true
   status.value = ''
@@ -121,7 +159,7 @@ async function refresh() {
   if (!demo) {
     const previousQuotes = new Map(groups.value.flatMap((entry) => entry.position ?? [])
       .filter((row) => 'price' in row || 'zdf' in row)
-      .map((row) => [symbolKey(row), { price: row.price, zdf: row.zdf }]))
+      .map((row) => [symbolKey(row), { price: row.price, zdf: row.zdf, metrics: row.metrics }]))
     for (const entry of incoming) {
       if (entry.position) entry.position = applyQuotes(entry.position, previousQuotes)
     }
@@ -159,7 +197,7 @@ async function restoreSession() {
   try {
     const saved = localStorage.getItem(skipRestoreKey)
       ? null
-      : await desktopCommand('load_session', { scope: sessionScope })
+      : await desktopCommand<Session | null>('load_session', { scope: sessionScope })
     if (saved) {
       user.value = saved
       await refresh()
@@ -196,7 +234,7 @@ async function search() {
   })
 }
 
-async function modify(action, row) {
+async function modify(action: 'add' | 'pin' | 'delete', row: Stock) {
   const current = group.value
   if (!current) return
   await run(async () => {
@@ -227,20 +265,71 @@ async function modify(action, row) {
   })
 }
 
-async function importSettings(event) {
+function openSettings() {
+  if (panel.value === 'settings') return
+  settingsDraft.value = { ...settings.value }
+  status.value = ''
+  panel.value = 'settings'
+}
+
+function leaveSettings() {
+  if (panel.value === 'settings') status.value = ''
+  panel.value = demo || user.value ? 'list' : 'login'
+}
+
+function showWatchlist() {
+  if (panel.value === 'startup') return
+  selectedKey.value = ''
+  leaveSettings()
+}
+
+function recordShortcut(event: KeyboardEvent, field: ShortcutField) {
+  if (event.key === 'Tab' || event.repeat) return
+  const shortcut = shortcutFromEvent(event)
+  if (!shortcut || !shortcut.includes('+')) return
+  event.preventDefault()
+  settingsDraft.value[field] = shortcut
+}
+
+function handleKeydown(event: KeyboardEvent) {
+  if (event.defaultPrevented || event.repeat) return
+  const target = event.target instanceof Element ? event.target : null
+  if (target?.closest('input, textarea, [contenteditable]:not([contenteditable="false"])')) return
+  const shortcut = shortcutFromEvent(event)
+  if (!shortcut) return
+  if (!isTauri() && shortcut === activeShortcuts.value.shortcut) {
+    event.preventDefault()
+    showWatchlist()
+    return
+  }
+  if (!listVisible.value || busy.value || groups.value.length < 2) return
+  if (!shortcut.includes('+') && target?.closest('select')) return
+  const direction = shortcut === activeShortcuts.value.previousGroupShortcut ? -1
+    : shortcut === activeShortcuts.value.nextGroupShortcut ? 1 : 0
+  if (!direction || !group.value) return
+  const index = groups.value.indexOf(group.value)
+  if (index < 0) return
+  event.preventDefault()
+  const count = groups.value.length
+  groupId.value = groups.value[(index + direction + count) % count].group_id
+}
+
+async function importSettings(event: Event) {
   const input = event.target
-  const file = input.files[0]
+  if (!(input instanceof HTMLInputElement)) return
+  const file = input.files?.[0]
   if (!file) return
   try {
     if (file.size > 1024 * 1024) throw new Error('配置文件过大')
-    const old = JSON.parse(await file.text())
+    const old: LegacySettings | null = JSON.parse(await file.text())
     if (!old?.config || typeof old.config !== 'object') throw new Error('无法识别旧版配置')
     const shortcut = old.shortcutKey?.windowShow
     const opacity = old.config.viewTransparency
-    settings.value = {
+    settingsDraft.value = {
+      ...settingsDraft.value,
       compact: old.config.stockView === 'simple',
       pinned: old.config.startToTop === true,
-      opacity: Number.isFinite(opacity) ? Math.max(0, Math.min(100, opacity)) : defaults.opacity,
+      opacity: typeof opacity === 'number' && Number.isFinite(opacity) ? Math.max(0, Math.min(100, opacity)) : defaults.opacity,
       shortcut: shortcut?.switch === false ? '' :
         typeof shortcut?.keyPad === 'string' ? shortcut.keyPad.replace(/\s*\+\s*/g, '+') : defaults.shortcut,
     }
@@ -254,10 +343,25 @@ async function importSettings(event) {
 
 function saveSettings() {
   return run(async () => {
-    await desktopCommand('set_shortcut', { shortcut: settings.value.shortcut.trim() || null })
-    await windowAction('setAlwaysOnTop', settings.value.pinned)
+    const next = { ...settingsDraft.value }
+    const assigned = new Set<string>()
+    for (const [field, label] of shortcutFields) {
+      const shortcut = normalizeShortcut(next[field])
+      if (shortcut === null) throw new Error(`「${label}」的快捷键格式不正确`)
+      if (shortcut && assigned.has(shortcut)) throw new Error('三个快捷键不能重复')
+      if (shortcut) assigned.add(shortcut)
+      next[field] = shortcut
+    }
+    await desktopCommand('set_shortcut', { shortcut: next.shortcut || null })
+    try {
+      await windowAction('setAlwaysOnTop', next.pinned)
+    } catch (error) {
+      await desktopCommand('set_shortcut', { shortcut: activeShortcuts.value.shortcut || null })
+      throw error
+    }
+    settings.value = next
     localStorage.setItem('desktop-settings', JSON.stringify(settings.value))
-    panel.value = demo || user.value ? 'list' : 'login'
+    leaveSettings()
   })
 }
 
@@ -266,15 +370,16 @@ watch([groupId, subscription, user], ([, symbols, account], _, onCleanup) => {
   if (demo || !symbols || !account) return
   const controller = new AbortController()
   const requested = symbols.split(',')
-  let timer
+  let timer: ReturnType<typeof setTimeout> | undefined
   async function poll() {
     try {
       const quotes = await loadQuotes(requested, controller.signal)
       if (controller.signal.aborted) return
-      group.value.position = applyQuotes(group.value.position, quotes)
+      const current = group.value
+      if (current) current.position = applyQuotes(current.position, quotes)
       quoteStatus.value = ''
     } catch (error) {
-      if (!controller.signal.aborted) quoteStatus.value = error.message
+      if (!controller.signal.aborted) quoteStatus.value = errorMessage(error)
     }
     if (!controller.signal.aborted) timer = setTimeout(poll, 15_000)
   }
@@ -293,7 +398,13 @@ watch(() => rows.value.slice(0, 5).map((item) => {
 
 onMounted(async () => {
   const cleanup = await listenTray((action) => {
-    if (action === 'settings') panel.value = 'settings'
+    if (action === 'settings') openSettings()
+    if (action === 'watchlist' || action === 'watchlist-focused') {
+      const input = document.activeElement
+      const field = action === 'watchlist-focused' && input instanceof HTMLElement && input.dataset.shortcutField
+      if (isShortcutField(field)) settingsDraft.value[field] = activeShortcuts.value.shortcut ?? ''
+      else showWatchlist()
+    }
     if (action === 'login') {
       if (demo) status.value = '离线样本无需登录'
       else if (!busy.value && panel.value !== 'startup') run(signOut)
@@ -305,8 +416,9 @@ onMounted(async () => {
   }
   unlisten = cleanup
   window.addEventListener('focus', refreshOnFocus)
+  window.addEventListener('keydown', handleKeydown)
   await Promise.allSettled([
-    desktopCommand('set_shortcut', { shortcut: settings.value.shortcut.trim() || null }).catch(report),
+    desktopCommand('set_shortcut', { shortcut: activeShortcuts.value.shortcut || null }).catch(report),
     windowAction('setAlwaysOnTop', settings.value.pinned).catch(report),
     demo ? refresh().catch(report) : run(restoreSession),
   ])
@@ -319,19 +431,21 @@ onUnmounted(() => {
   alive = false
   unlisten?.()
   window.removeEventListener('focus', refreshOnFocus)
+  window.removeEventListener('keydown', handleKeydown)
 })
 
 const quoteNumber = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
 const percentNumber = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-const hasQuote = (value) => value != null && value !== '' && Number.isFinite(Number(value))
-const formatPrice = (value) => hasQuote(value) ? quoteNumber.format(value) : '–'
-const formatChange = (value) => hasQuote(value) ? `${value > 0 ? '+' : ''}${percentNumber.format(value)}%` : '–'
+type QuoteValue = number | string | null | undefined
+const hasQuote = (value: QuoteValue): value is number | string => value != null && value !== '' && Number.isFinite(Number(value))
+const formatPrice = (value: QuoteValue) => hasQuote(value) ? quoteNumber.format(Number(value)) : '–'
+const formatChange = (value: QuoteValue) => hasQuote(value) ? `${Number(value) > 0 ? '+' : ''}${percentNumber.format(Number(value))}%` : '–'
 
 const StockChart = defineAsyncComponent(() => import('./StockChart.vue'))
 </script>
 
 <template>
-  <div class="shell" :class="{ compact: settings.compact }" :style="{ '--opacity': settings.opacity / 100 }">
+  <div class="shell" :class="{ compact: settings.compact }" :style="{ '--opacity': (panel === 'settings' ? settingsDraft.opacity : settings.opacity) / 100 }">
     <div class="shell-glow" aria-hidden="true"></div>
     <header class="toolbar" aria-label="应用工具栏">
       <select v-if="listVisible" v-model="groupId" class="group-select" aria-label="分组" :disabled="busy || !groups.length">
@@ -342,7 +456,7 @@ const StockChart = defineAsyncComponent(() => import('./StockChart.vue'))
         <button v-if="listVisible" type="button" class="layout-button" aria-label="精简模式" :aria-pressed="compactList" @click="toggleCompact">{{ compactList ? '展开' : '精简' }}</button>
         <span v-if="demo" class="mode">离线样本</span>
         <button v-if="listVisible" type="button" class="icon-button" :aria-expanded="searchVisible" :disabled="!group" aria-label="搜索股票" title="搜索股票" @click="toggleSearch"><img :src="searchIcon" alt=""></button>
-        <button type="button" class="icon-button" :disabled="panel === 'startup'" aria-label="设置" title="设置" @click="panel = 'settings'"><img :src="settingsIcon" alt=""></button>
+        <button type="button" class="icon-button" :disabled="panel === 'startup'" aria-label="设置" title="设置" @click="openSettings"><img :src="settingsIcon" alt=""></button>
       </div>
     </header>
 
@@ -362,14 +476,34 @@ const StockChart = defineAsyncComponent(() => import('./StockChart.vue'))
       <form v-else-if="panel === 'settings'" class="surface settings panel-enter" @submit.prevent="saveSettings">
         <div class="panel-heading">
           <h1>应用设置</h1>
-          <p class="muted">调整窗口显示与快捷键。</p>
+          <p class="muted">调整窗口显示、菜单栏图标与快捷键。</p>
         </div>
-        <label class="setting-row"><span>精简列表</span><input v-model="settings.compact" type="checkbox"></label>
-        <label class="setting-row"><span>窗口置顶</span><input v-model="settings.pinned" type="checkbox"></label>
-        <label class="setting-row"><span>窗口不透明度</span><input v-model.number="settings.opacity" type="range" min="0" max="100"></label>
-        <label class="setting-row"><span>窗口显示快捷键</span><input v-model="settings.shortcut" placeholder="Alt+Z"></label>
+        <label class="setting-row"><span>精简列表</span><input v-model="settingsDraft.compact" type="checkbox"></label>
+        <label class="setting-row"><span>窗口置顶</span><input v-model="settingsDraft.pinned" type="checkbox"></label>
+        <label class="setting-row"><span>窗口不透明度</span><input v-model.number="settingsDraft.opacity" type="range" min="0" max="100"></label>
+        <div class="tray-icon-settings">
+          <label class="setting-row">
+            <span>菜单栏图标</span>
+            <img :src="trayIconPreview" alt="" width="20" height="20">
+            <select :value="trayIcon.id" :disabled="trayIconPending" @change="selectTrayIcon">
+              <option v-for="option in trayOptions" :key="option.id" :value="option.id">{{ option.label }}</option>
+              <option v-if="trayIcon.custom" value="custom">自定义图片</option>
+            </select>
+          </label>
+          <label class="tray-icon-upload">上传图标<input type="file" accept="image/png,image/jpeg,image/webp" :disabled="trayIconPending" @change="uploadTrayIcon"></label>
+          <p class="muted">切换后立即生效。支持 2 MB 以内的 PNG、JPEG、WebP。</p>
+          <p v-if="trayIconError" class="notice" role="status">{{ trayIconError }}</p>
+        </div>
+        <label v-for="[field, label] in shortcutFields" :key="field" class="setting-row">
+          <span>{{ label }}</span>
+          <input v-model="settingsDraft[field]" :data-shortcut-field="field" placeholder="未设置" autocomplete="off" spellcheck="false" @keydown="recordShortcut($event, field)">
+        </label>
+        <p class="muted">点击输入框后按下组合键，或输入如 Alt+Z。留空可停用。唤出键全局生效，分组键在自选页面生效。</p>
         <label class="import-settings">导入旧版设置<input type="file" accept=".json,application/json" @change="importSettings"></label>
-        <button class="primary" :disabled="busy">保存设置</button>
+        <div class="settings-actions">
+          <button type="button" :disabled="busy" @click="leaveSettings">取消</button>
+          <button class="primary" :disabled="busy">保存设置</button>
+        </div>
       </form>
       <StockChart v-else-if="selected" :stock="selected" :initial-period="settings.compact ? 'intraday' : '1d'" @close="selectedKey = ''" />
       <section v-else ref="watchlist" class="watchlist" @scroll.passive="saveListScroll">
@@ -394,7 +528,7 @@ const StockChart = defineAsyncComponent(() => import('./StockChart.vue'))
               </button>
               <WatchlistSparkline v-if="!settings.compact" :row="row" :user="user" :group-id="groupId" />
               <div class="quote-values">
-                <span class="quote-change" :class="{ down: row.zdf < 0, up: row.zdf > 0 }">{{ formatChange(row.zdf) }}</span>
+                <span class="quote-change" :class="{ down: Number(row.zdf) < 0, up: Number(row.zdf) > 0 }">{{ formatChange(row.zdf) }}</span>
                 <span class="quote-price">{{ formatPrice(row.price) }}</span>
               </div>
               <div v-if="!settings.compact" class="quote-actions">
@@ -711,6 +845,11 @@ ul { margin: 0; padding: 0; list-style: none; }
 }
 .setting-row:last-of-type { border-bottom: 0; }
 .setting-row input:not([type=checkbox]) { width: 48%; }
+.tray-icon-settings { display: grid; gap: 6px; }
+.tray-icon-settings .setting-row img { margin-left: auto; object-fit: contain; }
+.tray-icon-upload { display: grid; gap: 5px; font-weight: 500; }
+.tray-icon-upload input { width: 100%; font-size: 11px; }
+.settings-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .import-settings input { width: 100%; font-size: 11px; }
 .primary {
   background: linear-gradient(180deg, #256891, var(--accent));

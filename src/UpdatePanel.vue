@@ -1,13 +1,17 @@
-<script setup>
+<script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { isTauri } from '@tauri-apps/api/core'
-import { desktopCommand } from './desktop.js'
+import { desktopCommand } from './desktop'
 
 defineProps({ visible: Boolean })
 
 const desktop = isTauri()
-const phase = ref('idle')
-const update = ref(null)
+type AvailableUpdate = { status: 'available'; version: string; notes: string | null }
+type UpdateResult = AvailableUpdate | { status: 'current' | 'disabled' }
+type UpdatePhase = UpdateResult['status'] | 'idle' | 'checking' | 'installing' | 'installed'
+
+const phase = ref<UpdatePhase>('idle')
+const update = ref<AvailableUpdate | null>(null)
 const failure = ref('')
 const restarting = ref(false)
 
@@ -17,7 +21,8 @@ async function check() {
   failure.value = ''
   update.value = null
   try {
-    const result = await desktopCommand('check_app_update')
+    const result = await desktopCommand<UpdateResult>('check_app_update')
+    if (!result) throw new Error('未收到更新检查结果')
     phase.value = result.status
     if (result.status === 'available') update.value = result
   } catch (error) {

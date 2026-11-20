@@ -1,6 +1,6 @@
-<script>
+<script lang="ts">
 const maxConcurrentRequests = 3
-const pending = []
+const pending: (() => Promise<void> | undefined)[] = []
 let active = 0
 
 function drainQueue() {
@@ -16,7 +16,7 @@ function drainQueue() {
   }
 }
 
-function enqueue(signal, run) {
+function enqueue(signal: AbortSignal, run: () => Promise<void>) {
   const start = () => {
     signal.removeEventListener('abort', remove)
     if (!signal.aborted) return run()
@@ -31,21 +31,22 @@ function enqueue(signal, run) {
 }
 </script>
 
-<script setup>
+<script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { demo, loadHistory, symbolKey } from './market.js'
+import { demo, loadHistory, symbolKey } from './market'
+import type { GroupId, Session, Stock } from './market'
 
-const props = defineProps({
-  row: { type: Object, required: true },
-  user: { type: Object, default: null },
-  groupId: { type: [Number, String], required: true },
-})
+const props = withDefaults(defineProps<{
+  row: Stock
+  user?: Session | null
+  groupId: GroupId | null
+}>(), { user: null })
 
-const element = ref(null)
+const element = ref<SVGSVGElement | null>(null)
 const inViewport = ref(false)
 const pageVisible = ref(false)
-const prices = ref([])
-let observer
+const prices = ref<number[]>([])
+let observer: IntersectionObserver | undefined
 
 const identity = [() => symbolKey(props.row), () => props.groupId, () => props.user]
 watch(identity, () => { prices.value = [] })
@@ -53,7 +54,7 @@ watch([...identity, inViewport, pageVisible], (_, previous, onCleanup) => {
   if (!inViewport.value || !pageVisible.value || (!demo && !props.user)) return
 
   const controller = new AbortController()
-  let timer
+  let timer: ReturnType<typeof setTimeout> | undefined
   const request = () => enqueue(controller.signal, async () => {
     const attempt = new AbortController()
     const abortAttempt = () => attempt.abort()
@@ -90,7 +91,7 @@ onMounted(() => {
   document.addEventListener('visibilitychange', updatePageVisibility)
   if ('IntersectionObserver' in window) {
     observer = new IntersectionObserver(([entry]) => { inViewport.value = entry.isIntersecting })
-    observer.observe(element.value)
+    if (element.value) observer.observe(element.value)
   } else {
     inViewport.value = true
   }

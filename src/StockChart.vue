@@ -1,97 +1,95 @@
-<script setup>
-import { onMounted, onUnmounted, ref, watch } from 'vue'
-import { CandlestickSeries, HistogramSeries, LineSeries, createChart } from 'lightweight-charts'
+<script setup lang="ts">
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import type { WatchStopHandle } from 'vue'
+import hqchart from 'hqchart/lib/umychart.vue.js'
+import { createStockChart, toChartData } from './hqStockChart'
 import { isTauri } from '@tauri-apps/api/core'
-import { desktopCommand } from './desktop.js'
-import { demo, loadHistory } from './market.js'
+import { desktopCommand } from './desktop'
+import { demo, loadHistory } from './market'
+import type { ChartPeriod, QuoteMetrics, Stock } from './market'
+import { isUSMarket } from './stockMarkets'
 import backIcon from './icons/chevron-left.svg'
 
-const props = defineProps({
-  stock: { type: Object, required: true },
-  initialPeriod: { type: String, default: '1d' },
-})
+const props = withDefaults(defineProps<{
+  stock: Stock
+  initialPeriod?: ChartPeriod
+}>(), { initialPeriod: '1d' })
+defineEmits<{ close: [] }>()
 const period = ref(props.initialPeriod)
-const periods = [['intraday', '分时'], ['1d', '日 K'], ['1w', '周 K'], ['1m', '月 K']]
-const surface = ref(null)
+const periods: [ChartPeriod, string][] = [['intraday', '分时'], ['1d', '日 K'], ['1w', '周 K'], ['1m', '月 K']]
+const surface = ref<HTMLDivElement | null>(null)
 const status = ref('')
-let chart
-let candles
-let volume
-let average
-let intraday
-let stop
+const market = computed(() => String(props.stock.info_market))
+const mainland = computed(() => market.value === '0' || market.value === '1')
+const currencyUnit = computed(() => mainland.value ? '元' : market.value === '116' ? '港元' : isUSMarket(market.value) ? '美元' : '')
+const volumeUnit = computed(() => mainland.value ? '手' : '股')
+type MetricKind = 'price' | 'amount' | 'volume' | '%'
+const detailFields: [label: string, key: keyof QuoteMetrics, kind?: MetricKind][] = [
+  ['今开', 'open', 'price'], ['昨收', 'previousClose', 'price'],
+  ['最高', 'high', 'price'], ['最低', 'low', 'price'],
+  ['换手率', 'turnover', '%'], ['振幅', 'amplitude', '%'],
+  ['量比', 'volumeRatio'], ['市盈率(TTM)', 'pe'],
+  ['市净率', 'pb'], ['总市值', 'marketCap', 'amount'],
+]
+
+function formatMetric(value: number | null | undefined, kind?: MetricKind) {
+  if (value == null || !Number.isFinite(value)) return '—'
+  if (kind === 'price') {
+    const digits = market.value === '116' || (mainland.value && String(props.stock.stock_type ?? '').includes('ETF')) ? 3 : 2
+    return value.toFixed(digits)
+  }
+  if (kind === 'amount' || kind === 'volume') {
+    const unit = kind === 'amount' ? currencyUnit.value : volumeUnit.value
+    if (Math.abs(value) >= 100000000) return `${(value / 100000000).toFixed(2)}亿${unit}`
+    if (Math.abs(value) >= 10000) return `${(value / 10000).toFixed(2)}万${unit}`
+    return `${value.toLocaleString('zh-CN')}${unit}`
+  }
+  return `${value.toFixed(2)}${kind ?? ''}`
+}
+
+let stop: WatchStopHandle | undefined
 
 onMounted(() => {
-  chart = createChart(surface.value, {
-    autoSize: true,
-    layout: {
-      attributionLogo: false,
-      background: { color: 'transparent' },
-      textColor: '#667284',
-      fontFamily: '"IBM Plex Sans", "Noto Sans SC", sans-serif',
-    },
-    grid: { vertLines: { color: 'rgba(26, 35, 48, 0.05)' }, horzLines: { color: 'rgba(26, 35, 48, 0.05)' } },
-    crosshair: {
-      vertLine: { color: 'rgba(31, 95, 139, 0.28)', width: 1, style: 2 },
-      horzLine: { color: 'rgba(31, 95, 139, 0.28)', width: 1, style: 2 },
-    },
-  })
-  candles = chart.addSeries(CandlestickSeries, {
-    upColor: '#d63b4a', downColor: '#0d8a6a',
-    borderVisible: false, wickUpColor: '#d63b4a', wickDownColor: '#0d8a6a',
-  })
-  average = chart.addSeries(LineSeries, { color: '#b8842d', lineWidth: 1 })
-  intraday = chart.addSeries(LineSeries, { color: '#1f5f8b', lineWidth: 2, visible: false })
-  volume = chart.addSeries(HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: '' })
-  volume.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } })
-  candles.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: 0.25 } })
-  stop = watch(() => [props.stock.info_code, props.stock.info_market, period.value], (_, previous, onCleanup) => {
+  stop = watch(() => [props.stock.info_code, props.stock.info_market, period.value], (_, _previous, onCleanup) => {
     const controller = new AbortController()
-    let timer
+    const stock = props.stock
+    const selectedPeriod = period.value
+    let chart: ReturnType<typeof createStockChart> | undefined
+    let lastData: string | undefined
+    let timer: ReturnType<typeof setTimeout> | undefined
+
     onCleanup(() => {
       controller.abort()
       clearTimeout(timer)
+      chart?.destroy()
     })
-    const showIntraday = period.value === 'intraday'
-    const localTime = new Intl.DateTimeFormat('zh-CN', {
-      timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-    })
-    const formatTime = (time) => localTime.format(new Date(time * 1000))
-    chart.applyOptions({
-      localization: { timeFormatter: showIntraday ? formatTime : (time) => new Date(time * 1000).toISOString().slice(0, 10) },
-      timeScale: { timeVisible: showIntraday, secondsVisible: false, tickMarkFormatter: showIntraday ? formatTime : () => null },
-    })
-    candles.applyOptions({ visible: !showIntraday })
-    average.applyOptions({ visible: !showIntraday })
-    intraday.applyOptions({ visible: showIntraday })
+
     status.value = '正在加载历史行情'
-    for (const series of [candles, average, intraday, volume]) series.setData([])
-    async function refresh(first) {
+    async function refresh() {
       try {
-        const rows = await loadHistory(props.stock, period.value, controller.signal)
-        if (controller.signal.aborted) return
-        if (!Array.isArray(rows) || rows.some((row, i) =>
-          ![row.time, row.open, row.high, row.low, row.close].every(Number.isFinite) ||
-          (row.volume !== null && !Number.isFinite(row.volume)) ||
-          row.high < Math.max(row.open, row.close, row.low) ||
-          row.low > Math.min(row.open, row.close) ||
-          (i > 0 && row.time <= rows[i - 1].time))) {
-          throw new Error('历史行情格式错误')
+        const rows = await loadHistory(stock, selectedPeriod, controller.signal)
+        const host = surface.value
+        if (controller.signal.aborted || !host) return
+        const data = toChartData(stock, selectedPeriod, rows)
+        if (data) {
+          const snapshot = JSON.stringify(data)
+          if (snapshot !== lastData) {
+            chart ??= createStockChart(hqchart.JSChart, host, selectedPeriod)
+            if (chart.render(data)) lastData = snapshot
+          }
+        } else {
+          chart?.destroy()
+          chart = undefined
+          lastData = undefined
         }
-        if (showIntraday) intraday.setData(rows.map((row) => ({ time: row.time, value: row.close })))
-        else candles.setData(rows)
-        volume.setData(rows.filter((row) => row.volume !== null).map((row) => ({ time: row.time, value: row.volume, color: row.close >= row.open ? 'rgba(214, 59, 74, 0.55)' : 'rgba(13, 138, 106, 0.55)' })))
-        if (!showIntraday) average.setData(rows.slice(4).map((row, i) => ({ time: row.time, value: rows.slice(i, i + 5).reduce((sum, item) => sum + item.close, 0) / 5 })))
-        if (first) chart.timeScale().fitContent()
-        status.value = rows.length ? '' : '暂无历史行情'
+        status.value = data ? '' : '暂无历史行情'
       } catch (error) {
-        if (!controller.signal.aborted) status.value = error.message
-      }
-      if (!demo && !controller.signal.aborted) {
-        timer = setTimeout(() => refresh(false), 30000)
+        if (!controller.signal.aborted) status.value = error instanceof Error ? error.message : String(error)
+      } finally {
+        if (!demo && !controller.signal.aborted) timer = setTimeout(refresh, 30000)
       }
     }
-    refresh(true)
+    refresh()
   }, { immediate: true })
 })
 
@@ -99,14 +97,11 @@ function openCredit() {
   if (isTauri()) {
     desktopCommand('open_chart_credit').catch((error) => { status.value = String(error) })
   } else {
-    window.open('https://www.tradingview.com/', '_blank', 'noopener,noreferrer')
+    window.open('https://github.com/jones2000/HQChart', '_blank', 'noopener,noreferrer')
   }
 }
 
-onUnmounted(() => {
-  stop?.()
-  chart?.remove()
-})
+onUnmounted(() => stop?.())
 </script>
 
 <template>
@@ -118,12 +113,24 @@ onUnmounted(() => {
       </div>
       <button class="chart-back" type="button" @click="$emit('close')"><img :src="backIcon" alt="">返回自选</button>
     </div>
+    <details v-if="stock.metrics" class="chart-metrics">
+      <summary aria-label="展开或收起行情摘要">
+        <span>成交量 <strong>{{ formatMetric(stock.metrics.volume, 'volume') }}</strong></span>
+        <span>成交额 <strong>{{ formatMetric(stock.metrics.amount, 'amount') }}</strong></span>
+      </summary>
+      <dl>
+        <div v-for="[label, key, kind] in detailFields" :key="key">
+          <dt>{{ label }}</dt>
+          <dd>{{ formatMetric(stock.metrics[key], kind) }}</dd>
+        </div>
+      </dl>
+    </details>
     <div class="periods" role="group" aria-label="图表周期">
       <button v-for="[value, label] in periods" :key="value" type="button" :aria-pressed="period === value" @click="period = value">{{ label }}</button>
     </div>
     <p v-if="status" class="chart-status" role="status">{{ status }}</p>
-    <div ref="surface" class="chart-surface"></div>
-    <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer" @click.prevent="openCredit">图表由 TradingView Lightweight Charts 提供</a>
+    <div class="chart-surface"><div ref="surface" class="chart-canvas"></div></div>
+    <a href="https://github.com/jones2000/HQChart" target="_blank" rel="noopener noreferrer" @click.prevent="openCredit">图表由 HQChart 提供</a>
   </section>
 </template>
 
@@ -165,6 +172,25 @@ onUnmounted(() => {
   border-color: transparent;
 }
 .chart-back img { width: 13px; height: 13px; }
+.chart-metrics {
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.chart-metrics summary { cursor: pointer; padding: 2px 1px; }
+.chart-metrics summary span { display: inline-block; margin-inline-end: 10px; }
+.chart-metrics strong, .chart-metrics dd { color: var(--ink); font-weight: 600; }
+.chart-metrics dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(58px, 1fr));
+  gap: 6px 10px;
+  margin: 5px 0 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.65);
+}
+.chart-metrics dd { margin: 0; }
 .periods {
   display: flex;
   gap: 3px;
@@ -183,7 +209,7 @@ onUnmounted(() => {
   color: var(--muted);
   font-weight: 600;
 }
-.periods button:enabled:hover {
+.periods button[aria-pressed=false]:enabled:hover {
   background: rgba(31, 95, 139, 0.06);
   border-color: transparent;
 }
@@ -201,13 +227,15 @@ onUnmounted(() => {
 }
 .chart-surface {
   flex: 1;
-  min-height: 250px;
+  position: relative;
+  min-height: 130px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow: hidden;
   background: rgba(255, 255, 255, 0.72);
   box-shadow: var(--shadow-sm);
 }
+.chart-canvas { position: absolute; inset: 0; }
 a {
   align-self: flex-start;
   font-size: 10px;
@@ -216,4 +244,12 @@ a {
   transition: color .18s ease;
 }
 a:hover { color: var(--accent); }
+@media (max-height: 350px) {
+  .chart { gap: 5px; padding-block: 5px; }
+  .chart-title small { display: none; }
+  .chart-heading h1 { font-size: 14px; }
+  .periods { padding: 2px; }
+  .periods button { padding-block: 2px; }
+  .chart-surface { min-height: 96px; }
+}
 </style>

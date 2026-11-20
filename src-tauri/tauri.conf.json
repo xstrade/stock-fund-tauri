@@ -42,7 +42,8 @@
     "resources": {
       "../LICENSE": "licenses/stock-fund-tauri.txt",
       "../THIRD_PARTY_NOTICES.md": "licenses/THIRD_PARTY_NOTICES.md",
-      "../licenses/lightweight-charts.txt": "licenses/lightweight-charts.txt",
+      "../licenses/hqchart.txt": "licenses/hqchart.txt",
+      "../licenses/jquery.txt": "licenses/jquery.txt",
       "../licenses/lucide.txt": "licenses/lucide.txt"
     }
   }

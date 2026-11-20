@@ -24,7 +24,7 @@ export default defineConfig({
     },
   ],
   projects: [
-    { name: '离线自选', testMatch: 'watchlist.spec.js', use: { baseURL: demoUrl } },
-    { name: '真实模式模拟服务', testMatch: 'market.spec.js', use: { baseURL: liveUrl } },
+    { name: '离线自选', testMatch: 'watchlist.spec.ts', use: { baseURL: demoUrl } },
+    { name: '真实模式模拟服务', testMatch: 'market.spec.ts', use: { baseURL: liveUrl } },
   ],
 })
