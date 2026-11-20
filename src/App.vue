@@ -467,6 +467,7 @@ const StockChart = defineAsyncComponent(() => import('./StockChart.vue'))
           <select v-model="groupId" class="group-select" aria-label="分组" title="切换分组" :disabled="busy || !groups.length">
             <option v-for="item in groups" :key="item.group_id" :value="item.group_id">{{ item.group_name }}</option>
           </select>
+          <div class="window-drag-handle" data-tauri-drag-region title="拖动窗口"></div>
           <button type="button" class="icon-button" aria-label="精简模式" aria-pressed="true" title="展开完整模式" @click="toggleCompact"><img :src="settingsIcon" alt=""></button>
         </div>
         <div class="toolbar-actions">
@@ -844,9 +845,31 @@ ul { margin: 0; padding: 0; list-style: none; }
   background: transparent;
   backdrop-filter: none;
 }
-.compact .toolbar-actions, .compact-controls { display: flex; gap: 0; }
-.compact-controls { opacity: 0; transition: opacity .18s var(--ease); }
-.compact-controls:hover, .compact-controls:focus-within { opacity: 1; }
+.compact .toolbar-actions { gap: 0; }
+.compact-controls {
+  position: absolute;
+  inset: 0 4px auto 0;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.window-drag-handle {
+  flex: 1;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  cursor: move;
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+.window-drag-handle::before {
+  content: "";
+  width: 26px;
+  height: 5px;
+  border-block: 1px solid currentColor;
+  filter: drop-shadow(0 1px 1px rgb(0 0 0 / 80%));
+}
 .compact .icon-button {
   width: 32px;
   height: 28px;
@@ -861,15 +884,18 @@ ul { margin: 0; padding: 0; list-style: none; }
 .compact .icon-button:enabled:hover, .compact .icon-button[aria-pressed=true] {
   background: rgb(255 255 255 / 15%);
 }
-.compact-controls .icon-button, .compact .group-select { width: 24px; }
+.compact-controls .icon-button { width: 24px; height: 22px; }
+.compact-controls .icon-button[aria-pressed=true]:not(:hover) { background: transparent; }
 .compact-controls .icon-button img { width: 14px; height: 14px; }
 .compact .group-select {
-  max-width: none;
-  padding: 0;
+  max-width: 50%;
+  padding: 0 2px;
   border: 0;
   background: transparent;
   cursor: pointer;
-  font-size: 0;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  text-shadow: inherit;
 }
 .compact .group-select option {
   background: var(--surface-solid);

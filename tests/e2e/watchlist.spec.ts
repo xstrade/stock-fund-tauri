@@ -59,6 +59,8 @@ test('设置导入仅保留界面配置，并在最小尺寸显示精简列表',
   await expect(page.getByRole('button', { name: '窗口置顶' })).toHaveAttribute('aria-pressed', 'true')
   await expect(page.getByRole('button', { name: '最小化' })).toBeVisible()
   await expect(page.getByRole('button', { name: '隐藏到托盘' })).toBeVisible()
+  await expect(page.getByRole('combobox', { name: '分组' })).toHaveCSS('font-size', '11px')
+  await expect(page.locator('.window-drag-handle')).toHaveAttribute('data-tauri-drag-region', '')
   for (const selector of ['.shell', '.toolbar', '.quote-table']) {
     await expect(page.locator(selector)).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
     await expect(page.locator(selector)).toHaveCSS('background-image', 'none')
@@ -97,6 +99,7 @@ test('精简模式从原分组打开分时，返回和重启后恢复滚动位�
   const compact = page.getByRole('button', { name: '精简模式' })
   await compact.click()
   await expect(compact).toHaveAttribute('aria-pressed', 'true')
+  await expect(group.locator('option:checked')).toHaveText('基金')
   await page.setViewportSize({ width: 230, height: 365 })
   const list = page.locator('.watchlist')
   await list.evaluate(element => { element.scrollTop = 160 })
